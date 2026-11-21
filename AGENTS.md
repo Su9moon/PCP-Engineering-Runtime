@@ -1,7 +1,7 @@
 # AGENTS.md — PCP Engineering Runtime
 
 ## First read
-Read README.md, PROJECT_STATUS.md, docs/architecture/POC_TARGET_ARCHITECTURE.md, docs/integration/DEPENDENCY_MAP.md, docs/engineering/EXPERIENCE_REUSE.md, the active workorder, then the relevant governance snapshots. PCP main remains canonical; snapshots are non-canonical continuity copies. Refresh them when PCP main advances.
+Read README.md, PROJECT_STATUS.md, docs/architecture/POC_TARGET_ARCHITECTURE.md, docs/integration/DEPENDENCY_MAP.md, docs/engineering/EXPERIENCE_REUSE.md, the active workorder, then the relevant governance snapshots, especially PCP Project & Workspace Identity Baseline V0.2 and the Project Surface Naming Convention. PCP main remains canonical; snapshots are non-canonical continuity copies. Refresh them when PCP main advances.
 
 ## Ownership
 - PCP main: cross-domain governance, architecture decisions and project identity.
@@ -31,6 +31,14 @@ Read README.md, PROJECT_STATUS.md, docs/architecture/POC_TARGET_ARCHITECTURE.md,
 - Do not invent fixed branch names, file-count restrictions or unrelated checks.
 - Do not modify PCP, EO, ES, CB, Ruflo, Autoloop or Symphony source unless the active workorder authorizes that exact change.
 - The POC may create EO Job/Workorder/Result/Evidence/Review records using existing schemas; do not change EO schemas or models.
+
+## Workspace identity
+
+- Stable domain_id is pcp-engineering-runtime; the canonical Remote Git repository is Su9moon/PCP-Engineering-Runtime on main.
+- The current identity baseline is PCP Project & Workspace Identity V0.2. V0.1 is historical only.
+- When a Local Codex Project is created, use the display name Lo_PCP Engineering Runtime. This is a UI label, not a new Domain identity.
+- Local Git, Persistent Worktree and Codex Project are progressively provisioned, not hard bootstrap gates. Discover the user's actual local path at runtime; do not assume the baseline default path or hard-code a machine-specific location.
+- Production Runtime Workspace / Installed Release are not part of this POC.
 
 ## Runtime security
 - Autoloop Workers initiate outbound connections. Do not expose Worker inbound ports.
