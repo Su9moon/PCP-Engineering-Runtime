@@ -73,13 +73,13 @@ Build a real, reviewable vertical POC in this repository. Prove one EO Workorder
 4. Implement the smallest PCP Runtime Adapter in this repository. It may expose MCP tools to Ruflo and call the existing ES Python ExecutionKernel plus Autoloop Hub HTTP API. No second Job / Workorder / Execution / Attempt store.
 5. Derive the Autoloop source event ID from ES execution_id + attempt_id. Record the Autoloop run ID as an ES runtime reference when the Worker actually starts.
 6. Configure Autoloop Hub and one Worker from the pinned Fork. Worker connects outbound to Hub over HTTPS. A same-host Worker is setup evidence only, not remote acceptance.
-7. Use examples/poc-fixture as the task target. The real Codex task is to add apply_discount_cents to the pricing module using integer cents only, discount basis points 0–10000, deterministic half-up rounding, strict integer validation and unit tests.
+7. Use examples/poc-fixture as the task target. The real Codex task is to add apply_discount_cents(subtotal_cents: int, discount_bps: int) -> int. Require exact integer types (bool and float are invalid), subtotal_cents >= 0, and 0 <= discount_bps <= 10000. Compute half-up rounding in integer arithmetic only: (subtotal_cents * (10000 - discount_bps) + 5000) // 10000. Add tests for ordinary discounts, 0 and 10000 basis points, 1-cent half-up boundaries (5000 -> 1 cent; 5001 -> 0 cents), negative values, out-of-range discounts, bools and floats. Use the existing stdlib unittest harness; add no dependency.
 8. Run Codex through the actual Autoloop Worker in a unique local Git worktree on the Worker host. Record Worker identity/host, Autoloop event/run IDs, Codex session evidence if exposed, worktree, branch, commit, logs and tests.
 9. Ruflo acts as central Supervisor. A separate Reviewer context must be read-only and inspect the original Workorder, diff, commit and test evidence. Do not reuse the authoring session.
 10. Run Product QA independently against the fixture's real entry point, including half-up rounding and invalid-input cases.
 11. Feed provider results to ES using the current authority and existing kernel methods. Record result/evidence and ES Review. Do not mark Execution DONE before approved Review.
 12. Create EO Result, Evidence and Review records using existing schemas/templates and the active EO Job / Workorder. Do not change EO schemas, models or governance.
-13. Verify Autoloop internal retries remain within the same ES Attempt / Invocation. Any new PCP Attempt requires new ES authorization.
+13. Verify Autoloop internal retries remain within the same ES Attempt / Invocation. A deterministic test double may be used only to test retry/correlation mapping; it is not evidence of real Codex execution. Any new PCP Attempt requires new ES authorization.
 14. Add only required integration tests and a concise runbook. Commit and push the POC on a normal feature branch if authentication permits; do not merge or deploy.
 
 ## Non-goals
