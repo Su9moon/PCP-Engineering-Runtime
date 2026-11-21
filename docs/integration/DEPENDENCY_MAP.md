@@ -6,7 +6,7 @@ All source refs are commit-pinned. Do not use floating latest versions.
 
 | Repository | Commit | Role |
 |---|---|---|
-| Su9moon/personal-ai-control-plane | 1cd4f0094cc8a7b7170876c471353da20c22fcad | Canonical governance / ADR |
+| Su9moon/personal-ai-control-plane | a66978ce1d5170fd1d0407678c78bdbb0c36d136 | Canonical governance / ADR |
 | Su9moon/pcp-engineering-operations | c22189ba1144cdcf5cebf9b10a7db8e7c4f2e94d | EO Job / Workorder / Result / Evidence / Review |
 | Su9moon/pcp-execution-server | 85783a75bd5ef7bc44110c6f9184b55748b4bfc4 | ES Execution / Attempt / Invocation authority |
 | Su9moon/codex-bridge | 9b626b492729f02f53d119657d4d0dad67f4f37a | Existing CB Bridge; unchanged in this POC |
