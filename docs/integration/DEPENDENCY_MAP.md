@@ -17,6 +17,12 @@ ES inputs: AGENTS.md; README.md; governance/snapshots/PCP_Execution_Server_BASEL
 
 The current ES implementation is an embedded Python kernel, not a general network service. Use its existing contract and code; do not create another canonical execution store.
 
+## EO POC Work Item
+
+- Job: Su9moon/pcp-engineering-operations@0ca2043e6149d9106f2e6caba5627a6511e1074c:jobs/JOB-20261122-001/job.yaml
+- Workorder: Su9moon/pcp-engineering-operations@0ca2043e6149d9106f2e6caba5627a6511e1074c:workorders/WO-20261122-001/workorder.yaml
+- Both records are READY and use the existing EO V0.1 schemas.
+
 ## Agent Autoloop
 
 - Fork: Su9moon/agent-autoloop-pcp
