@@ -1,0 +1,842 @@
+# PCP Project & Workspace Identity Baseline
+
+- Status: **FIXED**
+- Version: **V0.2**
+- Fixed date: **2026-09-22**
+- Previous: `V0.1 / FIXED`
+- Change source: `governance/adr/ADR-2026-09-22-002_runtime-independence-from-governance-plane.md`
+- Scope: PCP cross-domain governance
+- Canonical repository: `personal-ai-control-plane`
+
+## 1. Purpose
+
+本 Baseline 定义 PCP 及其下游 Domain 在以下对象之间的统一身份、状态与职责边界：
+
+- Domain
+- Remote Git Repository
+- Local Git
+- Persistent Worktree
+- Managed Worktree
+- Local Codex Project
+- Web GPT Project
+- Approved Release / Installed Release
+- Production Runtime Workspace
+- Production Runtime Codex Project
+
+目标不是要求所有 Domain 同时创建所有工作环境，而是保证：
+
+1. 所有工具围绕同一个 Domain Identity 工作；
+2. 不同工具不会各自产生平行事实源；
+3. 本地工程状态、共享正式状态、执行上下文和推理上下文可以明确区分；
+4. 新 Domain 可以渐进式建立 Local / Codex / Web 工作环境，而不依赖人工记忆其关系；
+5. 工程 Workspace 与 Production Runtime Workspace 不被误认为同一种工作表面；
+6. 已部署 Runtime 可以通过 Installed Release Identity 运行，而不要求实时访问原始 Governance Git。
+
+---
+
+## 2. Scope
+
+本 Baseline 属于 PCP 顶层跨域治理。
+
+适用于当前及后续 PCP / WPOS 工程 Domain，包括但不限于：
+
+- `personal-ai-control-plane`
+- `pcp-execution-server`
+- `pcp-engineering-operations`
+- `pcp-human-bridge`
+- `wpos-domain-business`
+- `codex-tools`
+
+本 Baseline 不属于任何单一子域。
+
+子域可以拥有自己的 Workspace、Execution 或 Repository 规则，但不得改变本 Baseline 定义的身份与权威关系。
+
+---
+
+## 3. Core Model
+
+统一模型分为 Engineering Plane 与 Production Runtime Plane：
+
+```text
+                         Domain Identity
+                               │
+                ┌──────────────┴──────────────┐
+                │                             │
+                ▼                             ▼
+        Engineering / Governance          Product / Runtime
+                │                             │
+                ▼                             ▼
+         Remote Git Repo                Approved Release
+      Build / Shared Canonical                │
+                │                             ▼
+                ▼                       Installed Release
+             Local Git                         │
+                │                             ▼
+       ┌────────┴────────┐          Production Runtime Workspace
+       ▼                 ▼                     │
+Persistent Worktree  Managed Worktree          ▼
+       │                               Production Runtime Executor
+       ▼                               (Codex / Agent / other)
+Engineering Codex Project
+
+Web GPT Project
+= Reasoning / Planning / Review Context
+```
+
+关键区别：
+
+- Engineering surfaces 围绕 Git canonical 工作；
+- Production Runtime surfaces 围绕 Installed Release 工作；
+- Installed Release 可追溯到 Git canonical，但 Runtime 不要求实时读取上游 Git；
+- Production Runtime Workspace 不是新的工程事实源，它拥有 live production state/data；
+- 所有对象仍关联同一个 Domain/Product Identity，但权威必须按 Plane 判断。
+
+---
+
+## 4. Domain Identity
+
+Domain 是最高层逻辑身份。
+
+每个正式 Domain 应具有稳定的：
+
+```text
+domain_id
+```
+
+通常与其 canonical Git Repository 对应。
+
+Domain Identity 用于关联：
+
+- Remote Git
+- Local Git
+- Persistent Workspace
+- Codex Project
+- Web GPT Project
+- Execution Workspace
+- Approved Release
+- Installed Release
+- Production Runtime Workspace
+- Production Runtime Codex Project
+
+Domain Identity 本身不依赖某一个客户端、电脑或 AI 产品存在。
+
+---
+
+## 5. Remote Git
+
+Remote Git Repository 是当前 PCP **工程体系**的共享事实载体。它是 Build / Engineering Authority，不自动成为已部署 Production Runtime 的实时运行权威。
+
+默认情况下：
+
+```text
+Remote Git Canonical Branch
+=
+Shared Canonical State
+```
+
+例如正式 `main` 分支中的：
+
+- Baseline
+- Governance
+- Architecture
+- Contract
+- Schema
+- AGENTS
+- Canonical Skill
+- 正式代码
+- 正式提交的 Workorder / Evidence
+- Version History
+
+构成其他 Agent、机器和入口共同读取的正式状态。
+
+### 5.1 Canonical Promotion
+
+信息从讨论状态升级为正式事实，应经过类似过程：
+
+```text
+Discussion
+    ↓
+Candidate Change
+    ↓
+Local Commit
+    ↓
+Push / Merge
+    ↓
+Remote Canonical
+```
+
+聊天中确认的内容，在正式生成对应文件并进入 Remote Git canonical branch 前，不自动成为共享工程事实。
+
+对于已部署产品，Remote Git 的后续变化不会直接改变 Runtime；必须先形成 Approved Release，再显式部署。
+
+---
+
+## 6. Local Git
+
+Local Git 表示本机工程记录状态。
+
+它不是新的共享事实源。
+
+状态区分：
+
+```text
+Working Tree
+= Candidate Change
+
+Local Commit
+= Local Recorded State
+
+Remote Canonical Commit
+= Shared Canonical State
+```
+
+因此，本地已经 commit，不等于其他 Web GPT、Worker 或其他机器已经可以将其视为当前正式状态。
+
+---
+
+## 7. Local Workspace Layout
+
+PCP 本地工程根遵循：
+
+```text
+F:\0 codex
+```
+
+标准结构：
+
+```text
+F:\0 codex\
+│
+├─ git-meta\
+│  └─ <repo>.git
+│
+├─ worktrees\
+│  ├─ persistent\
+│  │  └─ <repo>\
+│  │
+│  └─ managed\
+│     └─ <execution-worktree>\
+│
+└─ no-project-tasks\
+```
+
+### 7.1 git-meta
+
+```text
+F:\0 codex\git-meta\<repo>.git
+```
+
+职责：
+
+- 保存本机 Git repository metadata；
+- 为 persistent / managed worktree 提供共同 repository identity；
+- 不作为日常编辑工作目录。
+
+### 7.2 Persistent Worktree
+
+```text
+F:\0 codex\worktrees\persistent\<repo>
+```
+
+定义：
+
+```text
+Stable Local Workspace
+```
+
+职责：
+
+- Domain 的长期本地工作空间；
+- Human 的稳定工程入口；
+- Local Codex Project 的默认项目根；
+- 保存长期存在的 checkout。
+
+推荐关系：
+
+```text
+1 active Git Repo
+≈
+1 Primary Persistent Worktree
+≈
+1 Primary Local Codex Project
+```
+
+该关系是推荐路径，不是对所有 Repository 的强制要求。
+
+### 7.3 Managed Worktree
+
+```text
+F:\0 codex\worktrees\managed\<execution>
+```
+
+定义：
+
+```text
+Per-execution Workspace
+```
+
+用于：
+
+- 单次任务；
+- 隔离修改；
+- Codex 临时执行；
+- Execution Server 后续调度。
+
+Managed Worktree：
+
+- 不拥有新的 Domain Identity；
+- 不成为长期项目入口；
+- 不成为 canonical truth；
+- 可以根据执行生命周期创建或销毁。
+
+---
+
+## 8. Local Codex Project
+
+Local Codex Project 定义为：
+
+```text
+Execution Context
+```
+
+主要负责：
+
+- 读取 Repository；
+- 读取 `AGENTS.md`；
+- 使用 Skills；
+- 修改代码或文档；
+- 执行测试；
+- 产生 Diff；
+- 产生 Result / Evidence；
+- Commit / Push。
+
+对于需要持续工程工作的 Domain，推荐：
+
+```text
+Codex Project Root
+=
+Persistent Worktree Root
+```
+
+Codex Project 本身不是事实源。
+
+以下内容不能替代 Git：
+
+- Codex Chat；
+- Codex 当前线程上下文；
+- Codex Runtime State；
+- Managed Worktree 中未提交修改。
+
+---
+
+## 9. Approved Release / Installed Release
+
+### 9.1 Approved Release
+
+Approved Release 定义为：
+
+```text
+Deployable Product Identity
+```
+
+它由已批准 Engineering Canonical 构建/整理而成，并携带：
+
+- Release ID / Version；
+- source repo + exact commit provenance；
+- Artifact digest；
+- Connectivity Contract；
+- compatibility identity。
+
+Approved Release 是 Deployment Authority。
+
+### 9.2 Installed Release
+
+Installed Release 是某个 Production Runtime Workspace 当前实际安装并通过验证的 Release。
+
+它回答：
+
+> 当前这个生产环境按照哪一版产品定义运行？
+
+Installed Release 是 Production Runtime Authority。
+
+上游 Git main 更新不自动改变 Installed Release。
+
+---
+
+## 10. Production Runtime Workspace
+
+Production Runtime Workspace 定义为：
+
+```text
+Installed Product/Runtime + Live Production State/Data
+```
+
+它可以：
+
+- 是普通目录；
+- 没有 `.git`；
+- 不位于 `F:\0 codex\worktrees\`；
+- 使用 OneDrive、本地磁盘、服务器目录或其他正式生产路径；
+- 由 Codex / Agent / Script / Service 操作。
+
+它不是：
+
+- Persistent Worktree；
+- Managed Worktree；
+- Local Git；
+- Governance Repository。
+
+生产 Runtime Workspace 的受管控系统定义来自 Installed Release；live business/runtime data 则由该生产实例自己的事实源拥有。
+
+---
+
+## 11. Production Runtime Codex Project
+
+Production Runtime Codex Project 定义为：
+
+```text
+Runtime Execution Context
+```
+
+与 Engineering Codex Project 不同：
+
+### Engineering Codex Project
+
+典型 Root：
+
+```text
+F:\0 codex\worktrees\persistent\<repo>
+```
+
+用途：
+
+- 设计实现；
+- 代码/治理修改；
+- 测试；
+- Git Commit / PR。
+
+### Production Runtime Codex Project
+
+Root：
+
+```text
+<production-runtime-workspace>
+```
+
+用途：
+
+- 使用 Installed Release；
+- 处理真实生产状态/业务数据；
+- 执行已批准 Runtime Capability；
+- 产生生产运行结果。
+
+Production Runtime Codex Project：
+
+- 不要求 Root 是 Git worktree；
+- 不把 Codex Chat 当事实源；
+- 不因为 Governance Git 不可达而停止正常 Runtime（除非 Connectivity Contract 明确要求）；
+- 不拥有修改 Governance / Schema / canonical Skill 的权限。
+
+---
+
+## 12. Web GPT Project
+
+Web GPT Project 定义为：
+
+```text
+Reasoning / Planning / Review Context
+```
+
+主要负责：
+
+- 长期讨论；
+- 架构推理；
+- 方案比较；
+- 决策过程；
+- Workorder 准备；
+- Review；
+- 上下文连续性。
+
+Web GPT Project 不拥有 canonical state。
+
+### 9.1 Web Project Boundary
+
+Web GPT Project 应按照持续讨论与决策边界建立，而不机械要求：
+
+```text
+1 Git Repo
+=
+1 Web GPT Project
+```
+
+对于当前长期活跃、边界明确的 Domain，可以采用近似一一对应。
+
+后续新建 Repository 是否需要单独 Web Project，应根据实际持续讨论需求决定。
+
+---
+
+## 13. Web GPT Memory
+
+Web GPT Project Memory 与聊天记录仅用于：
+
+```text
+Conversation Continuity
+```
+
+可以帮助：
+
+- 恢复历史讨论；
+- 理解设计原因；
+- 减少重复背景说明。
+
+不得单独作为以下问题的权威答案：
+
+- 当前 Baseline 是什么；
+- 当前 Schema 是什么；
+- 当前接口是什么；
+- 当前正式代码是什么；
+- 当前 Git 状态是什么；
+- 当前 Issue / Workorder 正式状态是什么。
+
+遇到此类问题，应回到对应 Remote Git canonical source。
+
+---
+
+## 14. Authority by Plane
+
+PCP 不再使用一个单一线性层级解释 Engineering 与 Production Runtime。
+
+### Engineering Plane
+
+```text
+Remote Git Canonical
+  > Local Git Commit
+  > Working Tree
+  > Chat / Runtime Context
+```
+
+### Production Runtime Plane
+
+```text
+Installed Release
+  + canonical production data/state owners
+  > runtime working/output state
+  > chat/session context
+```
+
+Installed Release 不覆盖 live business facts；它拥有的是“系统按哪一版运行”的产品定义。
+
+Remote Git 与 Installed Release 都是权威，但分别属于不同 Plane。
+
+### Legacy Engineering Levels
+
+### Level 1 — Shared Canonical State
+
+```text
+Remote Git
+Canonical Branch
+```
+
+所有 Agent / Machine / Web GPT 应共同认可的正式状态。
+
+### Level 2 — Local Recorded State
+
+```text
+Local Git Commit
+Not Yet Published
+```
+
+已经记录，但尚未成为共享正式状态。
+
+### Level 3 — Working State
+
+```text
+Persistent Worktree
+Managed Worktree
+Staging Area
+Uncommitted Diff
+```
+
+正在工作的候选变化。
+
+### Level 4 — Reasoning / Execution Context
+
+```text
+Web GPT Chat
+Web GPT Project Memory
+Codex Chat
+Codex Runtime State
+```
+
+用于推理、规划和执行，不能独立升级为正式事实。
+
+---
+
+## 15. Progressive Provisioning
+
+建立新 Domain 时，不要求一次性创建所有工作环境。
+
+基础要求是：
+
+```text
+Domain Identity
++
+Remote Git Repository
++
+Canonical Rules
+```
+
+其他能力按需要渐进建立。
+
+### Local Workspace
+
+当首次需要长期本地工程工作时建立。
+
+### Codex Project
+
+当首次需要持续 Codex 工程上下文时建立。
+
+### Web GPT Project
+
+当该 Domain 开始产生持续、独立的讨论与 Review 上下文时建立。
+
+### Production Runtime Workspace
+
+只有当该 Domain / Product 进入真实部署运行时建立。
+
+建立时必须绑定一个 Approved / Installed Release Identity，而不是要求把生产目录变成 Git worktree。
+
+因此以下状态是允许的：
+
+```text
+Git:        READY
+Local:      NOT_INITIALIZED
+Codex:      NOT_INITIALIZED
+Web GPT:    NOT_REQUIRED
+```
+
+这不是错误状态。
+
+---
+
+## 16. Registry
+
+PCP 可以维护轻量 Project / Workspace Registry，用于避免依赖人工记忆。
+
+Registry 的职责是：
+
+```text
+Discovery / Mapping / Reminder
+```
+
+而不是：
+
+```text
+Hard Bootstrap Gate
+```
+
+建议记录最小信息：
+
+```yaml
+domain_id:
+
+remote_git:
+  repository:
+  canonical_branch:
+
+local:
+  git_metadata:
+  persistent_workspace:
+  status:
+
+codex:
+  project:
+  status:
+
+web_gpt:
+  project:
+  status:
+
+release:
+  approved_release:
+  installed_release:
+
+production_runtime:
+  workspace:
+  codex_project:
+  status:
+```
+
+状态可以包括：
+
+```text
+ready
+not_initialized
+not_required
+deprecated
+```
+
+Registry 记录项目工作表面是否存在，不拥有各 Domain 的业务事实。
+
+---
+
+## 17. Execution Relationship
+
+未来 PCP EO / ES 进入正式执行链路后，应先识别执行属于 Engineering 还是 Production Runtime。
+
+Engineering execution 通过 Domain Identity 解析 Git/worktree。
+
+Production runtime execution 通过 Product/Release Identity 解析 Installed Release + Production Runtime Workspace。
+
+逻辑关系：
+
+```text
+Engineering:
+
+domain_id
+    ↓
+Remote Repository Identity
+    ↓
+Local Repository Identity
+    ↓
+Persistent Workspace
+    ↓
+ExecutionRequest
+    ↓
+Managed Worktree
+    ↓
+Executor
+
+Production Runtime:
+
+product/domain identity
+    ↓
+Installed Release Identity
+    ↓
+Production Runtime Workspace
+    ↓
+Runtime Request
+    ↓
+Runtime Executor
+```
+
+临时本地路径、Codex-specific runtime details 等不得提升为 PCP canonical semantics。
+
+---
+
+## 18. Current Recommended Mapping
+
+当前活跃 Domain：
+
+```text
+personal-ai-control-plane
+pcp-execution-server
+pcp-engineering-operations
+pcp-human-bridge
+wpos-domain-business
+codex-tools
+```
+
+对于前五个长期活跃 Domain：
+
+```text
+Remote Git       → Required
+Persistent       → Recommended
+Codex Project    → Recommended
+Web GPT Project  → Recommended
+```
+
+`codex-tools`：
+
+```text
+Remote Git       → Required
+Persistent       → Recommended
+Codex Project    → Recommended
+Web GPT Project  → Optional / Based on ongoing reasoning needs
+```
+
+---
+
+## 19. Operating Principle
+
+开始处理一个已有 Domain / Product 前，先确认当前属于 Engineering Plane 还是 Production Runtime Plane。
+
+Engineering Plane 优先确认：
+
+```text
+Which Domain?
+      ↓
+Which Remote Git?
+      ↓
+What is current canonical state?
+      ↓
+Is local workspace needed?
+      ↓
+Is Codex execution needed?
+      ↓
+Is persistent Web reasoning context needed?
+```
+
+Production Runtime Plane 优先确认：
+
+```text
+Which Product / Runtime?
+      ↓
+Which Installed Release?
+      ↓
+Which Production Runtime Workspace?
+      ↓
+What live data/state authority?
+      ↓
+What Connectivity Contract?
+      ↓
+What Runtime Executor?
+```
+
+工具和 Workspace 应服务于 Domain / Product，而不是反过来定义身份。
+
+---
+
+## 20. Final Model
+
+最终固定：
+
+```text
+Remote Git
+= Shared Canonical State
+
+Local Git
+= Local Recorded State
+
+Persistent Worktree
+= Stable Local Workspace
+
+Managed Worktree
+= Per-execution Working State
+
+Local Codex Project
+= Execution Context
+
+Web GPT Project
+= Reasoning / Planning / Review Context
+```
+
+Production 侧同时固定：
+
+```text
+Approved Release
+= Deployment Authority
+
+Installed Release
+= Production Runtime Authority
+
+Production Runtime Workspace
+= Live deployed workspace
+
+Production Runtime Codex Project
+= Runtime Execution Context
+```
+
+所有工作表面围绕 Domain / Product Identity 工作。
+
+PCP 不允许 Web GPT、Codex、工程 Workspace、生产 Runtime Workspace 或临时运行态越权形成平行工程事实源；Production live data 仍由各自正式业务/运行事实源拥有。

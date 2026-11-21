@@ -174,3 +174,13 @@ POC 阶段先验证单节点，再扩展双节点并行；不把 Mock、Agent �
 ### 10.4 L0 business API boundary clarification
 
 L0 表达用户确认的目标分工：简单业务任务由 CB 直接调用受控外部 API，返回结构化结果给业务应用；该通道不启动 Ruflo/Autoloop。此决策**不声称当前 `codex-bridge` 仓库已经具备通用外部业务 API Adapter**。本次 Engineering Runtime POC 不修改 CB，也不扩展 CB 的现有 Worker/Task 架构；L0 的具体 Adapter 另按 CB 当前 Baseline 与授权推进。
+
+
+### 10.5 Domain and project-surface identity
+
+- Stable domain identity: `pcp-engineering-runtime`.
+- Canonical Remote Git: `Su9moon/PCP-Engineering-Runtime`, branch `main`, Public.
+- Apply current `PCP_PROJECT_WORKSPACE_IDENTITY_BASELINE_V0.2_FIXED.md`; V0.1 is the historical predecessor.
+- Apply `PCP_PROJECT_SURFACE_NAMING_CONVENTION_V0.1_FIXED.md` when a Local Codex Project is provisioned. Recommended display name: `Lo_PCP Engineering Runtime`.
+- Local Git metadata and Persistent Worktree are progressively provisioned, not hard bootstrap gates. No local path is asserted by this ADR; discover the user's actual workspace at execution time. Do not substitute the baseline's default path for a user-configured path.
+- A Web GPT Project is optional and is not required to make the Git domain valid. Production Runtime Workspace / Installed Release do not exist yet and are not part of this POC.
