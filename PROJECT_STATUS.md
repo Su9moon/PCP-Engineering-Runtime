@@ -9,7 +9,7 @@
 - Production deployment: not authorized
 
 ## Governance
-PCP main source used for the bootstrap snapshots: 1cd4f0094cc8a7b7170876c471353da20c22fcad. PCP main remains canonical. Canonical project ADR: Su9moon/personal-ai-control-plane:governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md. Local continuity snapshot: governance/snapshots/pcp/ADR-2026-11-22-001_pcp-engineering-runtime.md.
+PCP main source used for the bootstrap snapshots: a66978ce1d5170fd1d0407678c78bdbb0c36d136. PCP main remains canonical. Canonical project ADR: Su9moon/personal-ai-control-plane:governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md. Local continuity snapshot: governance/snapshots/pcp/ADR-2026-11-22-001_pcp-engineering-runtime.md.
 
 ## Pinned inputs
 - EO: Su9moon/pcp-engineering-operations@c22189ba1144cdcf5cebf9b10a7db8e7c4f2e94d
@@ -40,7 +40,14 @@ PCP main source used for the bootstrap snapshots: 1cd4f0094cc8a7b7170876c471353d
 - Initial README commit: c9ab4560965138575d08e24d0ec3f8fa8c02cacd
 - Architecture/docs/fixture commit: 8636ac80739ffa32cccb61a182963433779bc6a5
 - PCP governance snapshot/provenance commit: 7187fb0016223225835019f7c865a98565c81db2
-- 20 exact PCP governance/skill/baseline snapshots are present under governance/snapshots/pcp/.
+- 22 exact PCP governance/skill/baseline snapshots are present under governance/snapshots/pcp/.
+
+## Workspace identity
+
+- Current identity baseline: PCP Project & Workspace Identity V0.2.
+- Local Codex Project display name, when provisioned: Lo_PCP Engineering Runtime.
+- Local Git / Persistent Worktree / Codex UI state: not asserted by this bootstrap; discover the actual user workspace at execution time. No local path is hard-coded.
+- Production Runtime Workspace / Installed Release: not required for this engineering POC.
 
 ## Open for POC
 1. Resolve the exact Ruflo Fork URL locally; non-blocking for Autoloop setup.
