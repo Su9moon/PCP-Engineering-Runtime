@@ -21,11 +21,13 @@ source_work_item:
 
 ## Governing References
 
-- Su9moon/personal-ai-control-plane@1cd4f0094cc8a7b7170876c471353da20c22fcad: governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md
-- Su9moon/personal-ai-control-plane@1cd4f0094cc8a7b7170876c471353da20c22fcad: processes/architecture-governance-gate.md
-- Su9moon/personal-ai-control-plane@1cd4f0094cc8a7b7170876c471353da20c22fcad: processes/experience-reuse-gate.md
-- Su9moon/personal-ai-control-plane@1cd4f0094cc8a7b7170876c471353da20c22fcad: governance/PCP_EXECUTION_PROFILE_RESOLUTION_BASELINE.md
-- Su9moon/personal-ai-control-plane@1cd4f0094cc8a7b7170876c471353da20c22fcad: governance/PCP_EXECUTION_ENVIRONMENT_RESOLUTION_BASELINE.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: processes/architecture-governance-gate.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: processes/experience-reuse-gate.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: governance/PCP_EXECUTION_PROFILE_RESOLUTION_BASELINE.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: governance/PCP_EXECUTION_ENVIRONMENT_RESOLUTION_BASELINE.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: governance/baselines/PCP_PROJECT_WORKSPACE_IDENTITY_BASELINE_V0.2_FIXED.md
+- Su9moon/personal-ai-control-plane@a66978ce1d5170fd1d0407678c78bdbb0c36d136: governance/baselines/PCP_PROJECT_SURFACE_NAMING_CONVENTION_V0.1_FIXED.md
 - Su9moon/PCP-Engineering-Runtime: AGENTS.md, PROJECT_STATUS.md, docs/architecture/POC_TARGET_ARCHITECTURE.md, docs/integration/DEPENDENCY_MAP.md, docs/engineering/EXPERIENCE_REUSE.md
 - Su9moon/pcp-engineering-operations@c22189ba1144cdcf5cebf9b10a7db8e7c4f2e94d: AGENTS.md; schemas/job.schema.yaml; schemas/workorder.schema.yaml; schemas/result.schema.yaml; schemas/evidence.schema.yaml; schemas/review.schema.yaml; matching templates/
 - Su9moon/pcp-execution-server@85783a75bd5ef7bc44110c6f9184b55748b4bfc4: AGENTS.md; README.md; governance/contracts/NORTHBOUND_EXECUTION_CONTRACT_V0.1.md; governance/contracts/EXECUTION_STATE_MACHINE_V0.1.md; governance/contracts/WORKER_PROTOCOL_V0.2.md; governance/contracts/EXECUTOR_ADAPTER_CONTRACT_V0.1.md; src/execution_server/kernel.py; src/execution_server/store.py; docs/RUNTIME_BINDING_GITHUB_ORG_SHARED_RUNNER_VALIDATION_V0.1.md
@@ -65,7 +67,7 @@ Build a real, reviewable vertical POC in this repository. Prove one EO Workorder
 
 ## Scope
 
-1. Preflight GitHub identity, Node.js, Python, Codex CLI availability/authentication, Ruflo package/command and Hub-to-Worker network path. Do not print credentials.
+1. Preflight GitHub identity, Node.js, Python, Codex CLI availability/authentication, Ruflo package/command and Hub-to-Worker network path. Apply Workspace Identity V0.2; if a Local Codex Project is created, name it Lo_PCP Engineering Runtime. Discover the actual local workspace path instead of assuming a default. Do not print credentials.
 2. Resolve the user's Ruflo Fork URL using local authenticated GitHub CLI/API. If not discoverable, continue with the pinned upstream commit read-only. Do not write to upstream.
 3. Read the exact EO / ES / Autoloop / Ruflo references above. Confirm actual kernel methods and EO schemas; do not infer APIs from summaries.
 4. Implement the smallest PCP Runtime Adapter in this repository. It may expose MCP tools to Ruflo and call the existing ES Python ExecutionKernel plus Autoloop Hub HTTP API. No second Job / Workorder / Execution / Attempt store.
