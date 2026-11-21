@@ -171,7 +171,7 @@ connectivity_contract:
       requirement: required
       behavior_when_unavailable: "Complete local evidence and report the missing GitHub operation; do not claim a published branch."
     - capability: Autoloop Hub HTTPS endpoint
-      requirement: required_for_remote_acceptance
+      requirement: required
       behavior_when_unavailable: "Continue local setup; do not expose an insecure public endpoint; remote acceptance remains open."
     - capability: Codex / model service
       requirement: required
