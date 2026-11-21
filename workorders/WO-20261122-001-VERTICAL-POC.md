@@ -16,6 +16,7 @@ source_work_item:
   repository: Su9moon/pcp-engineering-operations
   job: jobs/JOB-20261122-001/job.yaml
   workorder: workorders/WO-20261122-001/workorder.yaml
+  source_commit: 0ca2043e6149d9106f2e6caba5627a6511e1074c
 ~~~
 
 ## Governing References
