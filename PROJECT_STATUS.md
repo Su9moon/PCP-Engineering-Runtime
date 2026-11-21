@@ -29,6 +29,19 @@ PCP main source used for the bootstrap snapshots: 1cd4f0094cc8a7b7170876c471353d
 - User reports a Ruflo Fork exists, but connected GitHub listing/search did not identify its exact URL. Resolve via local gh auth; if still unavailable, use pinned upstream read-only.
 - Symphony SPEC is Draft v1 and its Elixir README calls the implementation evaluation-only.
 
+## EO canonical work item
+
+- Job: Su9moon/pcp-engineering-operations@0ca2043e6149d9106f2e6caba5627a6511e1074c:jobs/JOB-20261122-001/job.yaml
+- Workorder: Su9moon/pcp-engineering-operations@0ca2043e6149d9106f2e6caba5627a6511e1074c:workorders/WO-20261122-001/workorder.yaml
+- EO Job/Workorder creation is complete; both are READY.
+
+## Repository bootstrap
+
+- Initial README commit: c9ab4560965138575d08e24d0ec3f8fa8c02cacd
+- Architecture/docs/fixture commit: 8636ac80739ffa32cccb61a182963433779bc6a5
+- PCP governance snapshot/provenance commit: 7187fb0016223225835019f7c865a98565c81db2
+- 20 exact PCP governance/skill/baseline snapshots are present under governance/snapshots/pcp/.
+
 ## Open for POC
 1. Resolve the exact Ruflo Fork URL locally; non-blocking for Autoloop setup.
 2. Confirm Node.js 24+ on Hub and Workers.
