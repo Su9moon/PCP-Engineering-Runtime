@@ -9,7 +9,7 @@
 - Production deployment: not authorized
 
 ## Governance
-PCP main source used for the bootstrap snapshots: 1cd4f0094cc8a7b7170876c471353da20c22fcad. PCP main remains canonical. Project ADR: governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md.
+PCP main source used for the bootstrap snapshots: 1cd4f0094cc8a7b7170876c471353da20c22fcad. PCP main remains canonical. Canonical project ADR: Su9moon/personal-ai-control-plane:governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md. Local continuity snapshot: governance/snapshots/pcp/ADR-2026-11-22-001_pcp-engineering-runtime.md.
 
 ## Pinned inputs
 - EO: Su9moon/pcp-engineering-operations@c22189ba1144cdcf5cebf9b10a7db8e7c4f2e94d
