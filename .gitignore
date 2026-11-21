@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+**/secrets.env
+**/config.json
+**/master.key
+**/hub.db*
+**/runs/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/dist/
+**/build/
+**/.worktrees/
