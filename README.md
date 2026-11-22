@@ -39,7 +39,8 @@ L0 is a separate lightweight path. It must not start Ruflo or Autoloop. This POC
 3. [Target POC architecture](docs/architecture/POC_TARGET_ARCHITECTURE.md).
 4. [Dependency map](docs/integration/DEPENDENCY_MAP.md).
 5. [Experience reuse](docs/engineering/EXPERIENCE_REUSE.md).
-6. [Codex vertical POC workorder](workorders/WO-20261122-001-VERTICAL-POC.md).
+6. [Ruflo local deployment workorder](workorders/WO-20261122-001-RUFLO-LOCAL-DEPLOYMENT.md) — execute this first on the local `cbnet` WSL host.
+7. [Codex vertical POC workorder](workorders/WO-20261122-001-VERTICAL-POC.md) — continue only after local Ruflo MCP smoke passes.
 
 ## Governance
 
