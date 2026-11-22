@@ -3,7 +3,7 @@
 - Domain ID: `pcp-engineering-runtime`
 - Repository: `Su9moon/PCP-Engineering-Runtime`
 - Default branch: `main`
-- Status: `RUFLO_LOCAL_DEPLOYMENT_COMPLETE`
+- Status: `RUFLO_LOCAL_DEPLOYMENT_COMPLETE_WITH_CODEX_AUTH_BLOCKER`
 - Target host: `cbnet` / Ubuntu 24.04 / WSL2
 
 ## Ruflo
@@ -16,7 +16,7 @@
 
 ## Codex MCP
 
-- WSL Codex CLI: `0.171.0`, ChatGPT login status must be revalidated after device-auth network completion.
+- WSL Codex CLI: `0.171.0`; `codex login status` remains `Not logged in`.
 - Exactly one global MCP entry named `ruflo` is configured.
 - Command: `/home/cbnet/.nvm/versions/node/v24.22.3/bin/npx -y ruflo@3.80.0 mcp start`.
 - Startup timeout: 120 seconds; tool timeout: 120 seconds.
