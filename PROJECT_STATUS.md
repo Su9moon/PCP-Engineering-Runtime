@@ -4,8 +4,9 @@
 - Repository: Su9moon/PCP-Engineering-Runtime
 - Visibility: Public (user-created; preserve)
 - Default branch: main
-- Status: BOOTSTRAP_COMPLETE / VERTICAL_POC_READY
-- Runtime implementation: not started
+- Status: BOOTSTRAP_COMPLETE / RUFLO_LOCAL_DEPLOYMENT_READY
+- Ruflo local runtime: deployment workorder prepared; execution not yet confirmed
+- Autoloop / EO-ES runtime integration: not started
 - Production deployment: not authorized
 
 ## Governance
@@ -49,11 +50,15 @@ PCP main source used for the bootstrap snapshots: a66978ce1d5170fd1d0407678c78bd
 - Local Git / Persistent Worktree / Codex UI state: not asserted by this bootstrap; discover the actual user workspace at execution time. No local path is hard-coded.
 - Production Runtime Workspace / Installed Release: not required for this engineering POC.
 
-## Open for POC
-1. Resolve the exact Ruflo Fork URL locally; non-blocking for Autoloop setup.
-2. Confirm Node.js 24+ on Hub and Workers.
-3. Confirm Codex CLI availability/authentication on the Worker.
-4. Confirm HTTPS reachability from a separate Worker host to Hub.
-5. Verify EO/ES mapping against exact contracts/schemas.
+## Immediate next action: Ruflo local deployment
 
-Active handoff: workorders/WO-20261122-001-VERTICAL-POC.md. No live Ruflo/Autoloop integration, multi-host run or production capability is claimed.
+- Active handoff: `workorders/WO-20261122-001-RUFLO-LOCAL-DEPLOYMENT.md`.
+- Target: new Windows 11 / WSL2 Ubuntu-24.04 host, Linux user `cbnet`.
+- Deployment mode: pinned Ruflo `3.80.0` stdio MCP launched on demand by WSL Codex; no daemon, hooks, plugin activation, Federation, or Autoloop yet.
+- The ChatGPT-to-WSL Codex Bridge tunnel is currently unavailable (`Tunnel-client has not been seen for 300 seconds`), so no local installation has been executed from this chat.
+- Ruflo Fork must be resolved by authenticated local `gh` lookup. If still unavailable, use the pinned upstream read-only as the deployment workorder specifies.
+
+## Next after local deployment passes
+
+- Resume `workorders/WO-20261122-001-VERTICAL-POC.md` for the EO/ES + Autoloop + Ruflo vertical POC.
+- No live Ruflo/Autoloop integration, multi-host run or production capability is claimed.
