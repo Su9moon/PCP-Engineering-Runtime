@@ -50,7 +50,7 @@ A fresh local stdio MCP process initialized successfully:
 {"serverInfo":{"name":"ruflo","version":"3.80.0"},"protocolVersion":"2024-11-05"}
 ```
 
-The server advertised 393 actual tool names. The complete discovered names are captured in the execution transcript; key requested tools were present: `mcp_status` and `guidance_brain`.
+The server advertised 393 actual tool names. Key requested tools were present: `mcp_status` and `guidance_brain`.
 
 The real read-only `mcp_status` call returned:
 
@@ -66,13 +66,40 @@ The real read-only `mcp_status` call returned:
 
 A read-only `guidance_brain` recommendation call for preserving EO/ES authority and leaving CB unchanged also returned successfully. No task, agent, swarm, or workorder was created.
 
+## Ruflo account and provider capability verification
+
+The pinned local CLI was queried without changing configuration:
+
+```text
+ruflo auth --help
+ruflo auth status
+ruflo providers --help
+ruflo providers list
+ruflo providers test -p openai
+```
+
+Observed behavior:
+
+- `ruflo auth` is Ruflo/Cognitum identity management (`login`, `logout`, `status`, named profiles); it is not the OpenAI ChatGPT/Codex OAuth store.
+- `ruflo providers` manages AI provider/API-key configuration and model selection.
+- `providers list` reports OpenAI as `Not configured`; `providers test -p openai` reports `Not configured (no API key found)`. No key was entered or created.
+- Therefore PCP keeps Codex/ChatGPT account switching in CC Switch and uses Ruflo for provider/agent orchestration only.
+
+The existing CC Switch provider `happy小任务主流` remains the active Windows-side Codex route. Its isolated terminal launcher still points at `.codex-plus-b`; no credentials were copied into WSL and no auth file was fabricated.
+
 ## Preservation evidence
 
 - No Ruflo HTTP/TCP listener, systemd service, daemon, Federation, or unattended worker was started.
 - CB Green / CB MCP / CB TaskStore were not started, stopped, restarted, migrated, repaired, or modified.
-- Windows Codex Desktop, CC Switch, and `~/.codex-plus-b` were not modified.
+- Windows Codex Desktop, CC Switch provider definitions, and `~/.codex-plus-b` were not modified. CC Switch was only inspected for its existing `happy小任务主流` route and target-directory behavior.
+- The WSL `/home/cbnet/.codex/config.toml` hash remained `8bfd5d31cf92f2b21d434d0f1db01794261ce399f14f2e6128e0e15ca43504f6` during this verification; it still contains only the Ruflo stdio MCP entry.
 - No provider API key, token, auth JSON, cookie, or secret was added to this repository.
 
-## Limitation
+## Current acceptance state
 
-The WSL Codex CLI is `0.171.0`, but `codex login status` remains `Not logged in`. The official device-auth browser flow reaches the callback page, while the CLI polling request to `https://auth.openai.com/api/accounts/deviceauth/token` fails with `error sending request for url`; no auth.json was created or modified. The endpoint itself is reachable from WSL: direct and configured-proxy POST probes receive HTTP 400 for an intentionally incomplete request, proving DNS/TLS/HTTP connectivity. The remaining failure is specific to the CLI device-auth polling exchange (likely proxy/client request handling or the authorization transaction not being visible to the polling client), not Ruflo/MCP. Minimal unblock: run the official `codex login --device-auth` flow in the same WSL shell and permit its HTTPS POST polling to `/api/accounts/deviceauth/token` through the active network path, then verify `codex login status` before rerunning the Codex-hosted MCP smoke. Direct MCP protocol verification is successful; Codex-hosted tool discovery remains pending this login result.
+- Ruflo direct stdio discovery and direct read-only `mcp_status` smoke remain successful: 393 tools; server `3.80.0`; `running=true`, `transport=stdio`, `port=null`, `host=null`.
+- `codex mcp list --json` still shows exactly one enabled MCP server, `ruflo`, with the pinned local stdio command.
+- A Codex-hosted smoke was attempted after CC Switch inspection. It could not reach the model backend because the WSL `CODEX_HOME=/home/cbnet/.codex` has no `auth.json`; the CLI returned HTTP `401 Unauthorized: Missing bearer or basic authentication in header` for `wss://api.openai.com/v1/responses` and HTTPS fallback.
+- `codex login status` remains `Not logged in`. The minimum unblock is a successful official Codex login that writes the WSL Codex auth state (or a supported CC Switch-managed WSL auth target); do not copy Windows credentials or hand-edit auth files.
+
+This report records the provider decision and the remaining Codex-hosted acceptance limitation without exposing credentials.
