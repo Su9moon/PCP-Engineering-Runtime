@@ -4,7 +4,7 @@
 
 ```yaml
 repository: Su9moon/PCP-Engineering-Runtime
-workorder_id: WO-20261122-001
+workorder_id: PCP-ER-RUFLO-LOCAL-DEPLOYMENT-01
 title: Deploy Ruflo locally on cbnet WSL and connect it to Codex
 executor: Codex CLI on WSL Ubuntu-24.04
 status: READY_FOR_EXECUTION
@@ -17,7 +17,7 @@ authorized_date: 2026-11-22
 
 Canonical PCP repository: `Su9moon/personal-ai-control-plane`
 
-Pinned PCP source commit: `04a49e571e4dbef79a105b9dee30acb6d8128468`
+Pinned PCP source commit: `22bae955686f03c5f440cdcd66e13a69f1289f90`
 
 Read:
 
@@ -31,7 +31,7 @@ Read:
 - `.agents/skills/cross-domain-discovery/SKILL.md`
 - `governance/baselines/PCP_Engineering_Operations_BASELINE.md`
 - `governance/baselines/PCP_Execution_Server_BASELINE.md`
-- `governance/baselines/PCP_PROJECT_WORKSPACE_IDENTITY_BASELINE_V0.1_FIXED.md`
+- `governance/baselines/PCP_PROJECT_WORKSPACE_IDENTITY_BASELINE_V0.2_FIXED.md`
 - `governance/baselines/PCP_PROJECT_WORKSPACE_REGISTRY_GOVERNANCE_V0.1_FIXED.md`
 - `governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md`
 
@@ -93,7 +93,7 @@ Success means:
 4. The setup uses the existing WSL Codex ChatGPT login; no separate provider API key is introduced.
 5. Existing CB Green and its MCP / TaskStore / processes / ports remain unchanged.
 
-This is a local runtime installation and smoke test, **not yet the Autoloop integration or a production execution rollout**.
+This is a local runtime installation and smoke test. The stdio MCP process is started on demand by Codex; this stage proves local Ruflo tool availability, **not yet unattended background scheduling, Autoloop integration or a production execution rollout**.
 
 ## Target host — use this environment only
 
