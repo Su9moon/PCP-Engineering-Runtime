@@ -3,41 +3,39 @@
 - Domain ID: `pcp-engineering-runtime`
 - Repository: `Su9moon/PCP-Engineering-Runtime`
 - Default branch: `main`
-- Status: `RUFLO_LOCAL_DEPLOYMENT_COMPLETE_WITH_CODEX_AUTH_BLOCKER_PROVIDER_VERIFIED`
-- Target host: `cbnet` / Ubuntu 24.04 / WSL2
+- Status: `VERTICAL_POC_LOCAL_SLICE_VERIFIED_REMOTE_ACCEPTANCE_OPEN`
+- Ruflo control-plane target: `cbnet` / Ubuntu 24.04 / WSL2
+- Execution location: flexible across authorized nodes; do not infer all workers must be on cbnet.
 
-## Ruflo
+## Ruflo deployment
 
-- Installed and executed: Ruflo `3.80.0` via pinned npm package `ruflo@3.80.0`.
-- Node.js: `v24.22.3` through user-level NVM.
-- npm: `11.19.1`.
-- `ruflo doctor`: completed; 22 checks passed and 14 warnings reported. Warnings are non-blocking and include absent Claude Code CLI, agent-browser, API keys, optional memory database/daemon, and no MCP config inside Ruflo itself.
-- Runtime mode: local stdio MCP on demand. No HTTP listener, TCP port, daemon, systemd service, Federation, swarm, worker, or autonomous fanout started.
+- Ruflo `3.80.0` is installed and run through Node.js `v24.22.3` / npm `11.19.1`.
+- Deployment is local stdio MCP on demand; no HTTP/TCP service, daemon, systemd unit, Federation, or autonomous fanout was started.
+- Existing Ruflo deployment report: `reports/LOCAL-RUFLO-DEPLOYMENT-20261122.md`.
 
-## Ruflo account/provider boundary
+## Codex / CC Switch
 
-- `ruflo auth --help` and `ruflo auth status` confirm Ruflo's auth command is Cognitum identity/profile management, not ChatGPT/Codex OAuth.
-- `ruflo providers list` shows OpenAI `Not configured`; `providers test -p openai` reports no API key. No provider key was added.
-- Existing CC Switch provider `happy小任务主流` remains the active Windows-side route. CC Switch remains the account/provider switcher; Ruflo remains the local orchestration/provider capability layer.
+- WSL Codex CLI `0.171.0` successfully completed a real model-only `codex exec` using the existing CC Switch `happy小任务主流` profile via `CODEX_HOME=/home/cbnet/.codex-plus-b`; no secret material was displayed or copied.
+- Codex ephemeral MCP config override discovered Ruflo `mcp_status` and invoked it successfully. Result: `running=true`, `transport=stdio`, `port=null`, `host=null` (process PID was observed in command output). The persistent Codex and CC Switch configurations were unchanged.
+- This provider-backed model path is distinct from official ChatGPT OAuth login under `/home/cbnet/.codex`; do not infer OAuth login from it.
 
-## Codex MCP
+## Existing Vertical POC progress
 
-- WSL Codex CLI: `0.171.0`; `codex login status` remains `Not logged in` for `/home/cbnet/.codex`.
-- Exactly one global MCP entry named `ruflo` is configured.
-- Command: `/home/cbnet/.nvm/versions/node/v24.22.3/bin/npx -y ruflo@3.80.0 mcp start`.
-- Startup timeout: 120 seconds; tool timeout: 120 seconds.
-- Direct MCP protocol smoke passed: server initialized as `ruflo` `3.80.0`; 393 tool names were discovered; `mcp_status` returned `running=true`, `transport=stdio`, `port=null`, `host=null`.
-- `guidance_brain` read-only recommendation call also passed.
-- A Codex-hosted smoke reached the API endpoint but failed before MCP/tool discovery with HTTP `401 Unauthorized: Missing bearer or basic authentication in header` on WebSocket and HTTPS fallback.
+- Continued `workorders/WO-20261122-001-VERTICAL-POC.md`; no replacement POC created.
+- Added fixture discount behavior with integer-cent arithmetic, basis-point rates, half-up rounding, and input validation. Eight fixture unit tests pass.
+- This was a local Codex execution, not an Autoloop Worker run. No ES-authorized Execution/Attempt/Invocation, Ruflo-supervised task, independent Review, or EO Result/Evidence/Review is claimed.
+- Detailed evidence and blockers: `reports/VERTICAL-POC-EXECUTION-20261123.md`.
 
-## PCP boundaries
+## Open acceptance prerequisites
 
-- EO Workorder / Result / Evidence and ES Execution / Attempt / Invocation remain authoritative.
-- Autoloop integration is not started.
-- EO/ES adapters are not started.
-- CB Green, CB MCP, CB TaskStore, processes, and ports were not modified.
-- Windows Codex Desktop and `/home/cbnet/.codex-plus-b` were not modified. Existing CC Switch route `happy小任务主流` was inspected only.
+- No `~/.agent-autoloop` initialization/configuration or running Autoloop Hub was present.
+- No separate authorized Worker host was verified.
+- No secure HTTPS Hub route was provided/reachable; only local CC Switch endpoint `127.0.0.1:15721` was reachable.
+- No live ES authority/store was exercised to issue an authorized ExecutionRequest and Invocation.
+- Independent read-only Review and EO evidence return remain open.
 
-## Remaining limitation
+Unblock the end-to-end chain by providing/authorizing a Worker host with Node 24+, Codex model access and pinned Autoloop setup; a secured HTTPS Hub route; and the live/pinned ES authority store to authorize one frozen request. Then capture real Autoloop, ES, Review and EO identities. Do not add API keys, schedulers, or public plain-HTTP listeners as a workaround.
 
-The Codex interactive `codex exec` smoke could not complete tool discovery because the WSL ChatGPT auth state is absent. It returned HTTP `401 Unauthorized: Missing bearer or basic authentication in header` for the Responses WebSocket and HTTPS fallback. `codex login status` reports `Not logged in`. Ruflo direct stdio MCP discovery and `mcp_status` remain successful. Minimum unblock: complete an official Codex login for `/home/cbnet/.codex` or use a supported CC Switch-managed WSL auth target; do not copy credentials or edit auth files manually.
+## Preserved boundaries
+
+CB Green, TaskStore, Windows Codex, and existing CC Switch account/provider configuration were not modified. Ruflo, Autoloop, PCP, EO, and ES upstream source were not modified.

@@ -11,3 +11,13 @@ def subtotal_cents(lines: list[tuple[int, int]]) -> int:
             raise ValueError("unit_price_cents must be a non-negative integer")
         total += quantity * unit_price_cents
     return total
+
+
+def apply_discount_cents(subtotal_cents: int, discount_basis_points: int) -> int:
+    """Apply a discount and round half-up to the nearest cent."""
+    if type(subtotal_cents) is not int or subtotal_cents < 0:
+        raise ValueError("subtotal_cents must be a non-negative integer")
+    if type(discount_basis_points) is not int or not 0 <= discount_basis_points <= 10000:
+        raise ValueError("discount_basis_points must be an integer from 0 to 10000")
+    numerator = subtotal_cents * (10000 - discount_basis_points)
+    return (numerator * 2 + 10000) // 20000
