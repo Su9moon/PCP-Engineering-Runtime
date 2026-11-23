@@ -26,19 +26,27 @@ class SubtotalTests(unittest.TestCase):
 
 
 class DiscountTests(unittest.TestCase):
-    def test_applies_basis_point_discount(self):
+    def test_applies_basis_point_discount(self) -> None:
         self.assertEqual(apply_discount_cents(1000, 2500), 750)
 
-    def test_half_up_rounding(self):
+    def test_half_up_rounding_boundaries(self) -> None:
         self.assertEqual(apply_discount_cents(1, 5000), 1)
-        self.assertEqual(apply_discount_cents(3, 5000), 2)
+        self.assertEqual(apply_discount_cents(1, 5001), 0)
 
-    def test_zero_and_full_discount(self):
+    def test_zero_and_full_discount(self) -> None:
         self.assertEqual(apply_discount_cents(123, 0), 123)
         self.assertEqual(apply_discount_cents(123, 10000), 0)
 
-    def test_rejects_invalid_inputs(self):
-        for amount, rate in [(-1, 0), (1.5, 0), (1, -1), (1, 10001), (1, 2.5), (True, 0)]:
+    def test_rejects_invalid_inputs(self) -> None:
+        for amount, rate in [
+            (-1, 0),
+            (1.5, 0),
+            (1, -1),
+            (1, 10001),
+            (1, 2.5),
+            (True, 0),
+            (1, True),
+        ]:
             with self.subTest(amount=amount, rate=rate):
                 with self.assertRaises(ValueError):
                     apply_discount_cents(amount, rate)
