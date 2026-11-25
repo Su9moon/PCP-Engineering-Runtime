@@ -38,7 +38,7 @@
 <header class="topbar"><div class="crumb">PCP / Engineering Runtime / <b id="crumb">总览</b></div><div class="top-actions"><span class="pill"><i class="dot green"></i>Ruflo MCP 已连接</span><span class="pill"><i class="dot green"></i>Autoloop 本机 Hub</span><span class="pill demo-tag">设计演示 · 非实时数据</span></div></header>
 <div class="content">
 <section class="page active" id="page-overview">
-  <div class="page-head"><div><div class="eyebrow">Engineering workspace</div><h1>工程工作总览</h1><p>从任务请求、Agent 协作到执行证据与人工复核，统一观察工程交付。</p></div><div class="actions"><button class="btn" onclick="toast('演示模式：刷新不会连接实际运行时')">↻ 刷新状态</button><button class="btn primary" onclick="openModal()">＋ 新建工程任务</button></div></div>
+  <div class="page-head"><div><div class="eyebrow">Engineering workspace</div><h1>工程工作总览</h1><p>从任务请求、Agent 协作到执行证据与人工复核，统一观察工程交付。</p></div><div class="actions"><button class="btn" onclick="toast('演示模式：刷新不会连接实际运行时')">↻ 刷新状态</button><button class="btn primary" onclick="openModal()">＋ 开始需求对话</button></div></div>
   <div class="grid metrics">
     <div class="card metric"><div class="metric-top"><span>已完成执行 Run</span><span class="metric-icon">✓</span></div><div class="metric-value">3 / 3</div><div class="metric-foot good">本轮体验的 3 次 Run 均返回 done</div></div>
     <div class="card metric"><div class="metric-top"><span>Ruflo Supervisor</span><span class="metric-icon">◇</span></div><div class="metric-value">1</div><div class="metric-foot">已注册 · 尚未证明自主模型执行</div></div>
@@ -82,7 +82,7 @@
   </div>
 </section>
 <section class="page" id="page-tasks">
- <div class="page-head"><div><div class="eyebrow">Work management</div><h1>工程任务</h1><p>任务是长期工作单元；每个任务可以关联多次执行、结果和复核。</p></div><div class="actions"><button class="btn primary" onclick="openModal()">＋ 新建工程任务</button></div></div>
+ <div class="page-head"><div><div class="eyebrow">Work management</div><h1>工程任务</h1><p>任务是长期工作单元；每个任务可以关联多次执行、结果和复核。</p></div><div class="actions"><button class="btn primary" onclick="openModal()">＋ 开始需求对话</button></div></div>
  <div class="filters"><input id="taskSearch" class="search" placeholder="搜索任务名称、Event ID、Run ID…" oninput="filterTasks()"/><select class="filter" id="taskFilter" onchange="filterTasks()"><option value="all">全部状态</option><option value="done">已完成</option><option value="running">执行中</option><option value="blocked">受阻</option></select><span class="pill demo-tag">当前为体验记录快照</span></div>
  <div class="card"><div class="card-body table-wrap" style="padding-top:10px"><table id="taskTable"><thead><tr><th>任务</th><th>任务类型</th><th>状态</th><th>执行器</th><th>Event / Run</th><th>结果状态</th></tr></thead><tbody>
  <tr data-state="done" data-search="READ_ONLY_INSPECT 4 3"><td><span class="task-title">READ_ONLY_INSPECT</span><span class="sub">只读检查 · 本轮体验</span></td><td>Inspection</td><td><span class="status done">已完成</span></td><td>Codex CLI</td><td class="mono">E4 / R3</td><td>Provider Run done</td></tr>
@@ -157,7 +157,7 @@ const taskData={READ_ONLY_INSPECT:{desc:'只读检查 · 本轮体验任务',eve
 function openTask(name){const d=taskData[name];if(!d)return;document.getElementById('drawerTitle').textContent=name;document.getElementById('drawerContent').innerHTML=`<div class="detail-block"><h3>执行摘要</h3><div class="kv"><span>任务类型</span><span>${d.desc}</span></div><div class="kv"><span>Autoloop Event</span><span class="mono">${d.event}</span></div><div class="kv"><span>Autoloop Run</span><span class="mono">${d.run}</span></div><div class="kv"><span>Worker</span><span>${d.worker}</span></div><div class="kv"><span>Executor</span><span>${d.executor}</span></div><div class="kv"><span>Provider 状态</span><span class="status done">done</span></div><div class="kv"><span>EO / ES 关联</span><span class="status neutral">未建立</span></div></div><div class="detail-block"><h3>结果说明</h3><div style="font-size:11px;line-height:1.65;color:#526176">${d.detail}</div></div><div class="note">此面板详情在正式实现中应通过 Autoloop / ES / EO 适配器读取原始数据，并提供可打开的证据链接。</div>`;document.getElementById('drawer').classList.add('open')}
 function closeDrawer(){document.getElementById('drawer').classList.remove('open')}
 function filterTasks(){const q=document.getElementById('taskSearch').value.toLowerCase();const f=document.getElementById('taskFilter').value;document.querySelectorAll('#taskTable tbody tr').forEach(r=>{r.style.display=((f==='all'||r.dataset.state===f)&&((r.dataset.search||'').toLowerCase().includes(q)))?'':'none'})}
-function openModal(){document.getElementById('modal').classList.add('show')}function closeModal(){document.getElementById('modal').classList.remove('show')}
+function openModal(){window.location.href='pcp-engineering-control-center-conversational-intake-demo.html'}function closeModal(){document.getElementById('modal').classList.remove('show')}
 function createDemoTask(){const title=document.getElementById('newTitle').value.trim();if(!title){toast('请先填写任务名称');return}closeModal();toast('演示任务已加入本地预览；未写入 EO / ES。');document.getElementById('newTitle').value='';document.getElementById('newRepo').value='';document.getElementById('newGoal').value=''}
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDrawer();closeModal()}});
 </script>
