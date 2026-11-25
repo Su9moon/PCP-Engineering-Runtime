@@ -1,12 +1,13 @@
 """Focused V1.2 tests for plan versions and authorization separation."""
 import hashlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from intake import Intake, IntakeError, text_input
-from planning import LocalPlanner, PlanError, model_plan, normalize_plan
+from planning import LocalPlanner, PlanError, model_plan, normalize_plan, route_matches
 from sources import PROJECT
 
 
@@ -43,11 +44,19 @@ class ValidationTests(unittest.TestCase):
                 path = root / role
                 path.write_text(role)
                 contract[role] = {"path": str(path), "sha256": hashlib.sha256(role.encode()).hexdigest()}
+            contract["node"] = str(Path(sys.executable).resolve())
             planner = LocalPlanner({"adapter": str(root / "adapter"), "cwd": directory, "contract": contract})
             with patch.dict("os.environ", {"CLAUDE_FLOW_ROUTER_FALLBACK_MAX_RETRIES": "0"}):
                 self.assertTrue(planner.available())
                 (root / "launcher").write_text("changed")
                 self.assertFalse(planner.available())
+
+    def test_route_receipt_has_to_match_a_nonempty_id_and_model(self):
+        receipt = {"http_status": 200, "message_id": "msg1", "response_model": "sol"}
+        self.assertTrue(route_matches({"messageId": "msg1", "model": "sol"}, receipt))
+        self.assertFalse(route_matches({}, {"http_status": 200}))
+        self.assertFalse(route_matches({"messageId": "different", "model": "sol"}, receipt))
+        self.assertFalse(route_matches({"messageId": "msg1", "model": "other"}, receipt))
 
     def test_unknown_edges_and_cycles(self):
         for tasks in (
@@ -110,8 +119,11 @@ class VersionTests(unittest.TestCase):
     def test_planner_rejects_mismatched_confirmed_snapshot_before_provider_call(self):
         self.confirm_requirements()
         package = self.draft["packages"][-1]
-        self.change("message", text="Scope has changed")
         planner = LocalPlanner(None)
+        with patch.object(planner, "available", return_value=True), patch.object(planner, "call", return_value=({}, None)) as accepted:
+            planner.propose(self.draft, package)
+            accepted.assert_called_once()
+        self.change("message", text="Scope has changed")
         with patch.object(planner, "call") as caller:
             with self.assertRaisesRegex(PlanError, "已确认文档"):
                 planner.propose(self.draft, package)

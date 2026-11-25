@@ -1,11 +1,12 @@
 """Versioned orchestration draft validation and local Supervisor planning."""
 import hashlib
-import importlib.util
 import json
 import os
 import queue
 import re
+import subprocess
 import threading
+import types
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
@@ -109,25 +110,63 @@ def model_plan(value):
     return value
 
 
+def route_matches(result, receipt):
+    return (receipt.get("http_status") == 200 and bool(result.get("messageId"))
+            and receipt.get("message_id") == result.get("messageId")
+            and bool(result.get("model")) and receipt.get("response_model") == result.get("model"))
+
+
 class LocalPlanner:
     def __init__(self, settings):
         self.settings = settings
         self.lock = threading.Lock()
 
-    def available(self):
+    def verified_adapter(self):
         if not self.settings or os.environ.get("CLAUDE_FLOW_ROUTER_FALLBACK_MAX_RETRIES") != "0":
-            return False
+            return None
         try:
             contract = self.settings["contract"]
+            if (self.settings["adapter"] != contract["adapter"]["path"] or not Path(self.settings["cwd"]).is_dir()
+                    or Path(contract["node"]).resolve(strict=True) != Path(contract["node"])):
+                return None
+            artifacts = {}
             for role in ("adapter", "launcher", "tool", "core"):
                 item = contract[role]
                 path = Path(item["path"])
-                if path.resolve(strict=True) != path or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
-                    return False
-            return (self.settings["adapter"] == contract["adapter"]["path"]
-                    and Path(self.settings["cwd"]).is_dir())
+                if path.resolve(strict=True) != path:
+                    return None
+                content = path.read_bytes()
+                if hashlib.sha256(content).hexdigest() != item["sha256"]:
+                    return None
+                artifacts[role] = content
+            return artifacts["adapter"]
         except (KeyError, OSError, TypeError, ValueError):
-            return False
+            return None
+
+    def available(self):
+        return self.verified_adapter() is not None
+
+    def load_adapter(self):
+        verified = self.verified_adapter()
+        if verified is None:
+            raise PlanError("现有 Ruflo 纯文本入口未配置或与已核验文件不符。")
+        cfg = self.settings
+        contract = cfg["contract"]
+        adapter = types.ModuleType("verified_local_ruflo_adapter")
+        adapter.__file__ = cfg["adapter"]
+        exec(compile(verified, adapter.__file__, "exec"), adapter.__dict__)
+
+        def launch(args, **options):
+            expected = ["-y", "ruflo@" + contract["version"], "mcp", "start"]
+            if args[1:] != expected:
+                raise PlanError("现有 Ruflo 配置命令与已验证的入口不一致。")
+            # Retain the existing adapter protocol and launch its audited installed CLI directly.
+            return subprocess.Popen([contract["node"], contract["launcher"]["path"], "mcp", "start"], **options)
+
+        adapter.subprocess = types.SimpleNamespace(
+            Popen=launch, TimeoutExpired=subprocess.TimeoutExpired, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL,
+        )
+        return adapter
 
     def check_launcher(self, runtime):
         contract = self.settings["contract"]
@@ -181,16 +220,16 @@ class LocalPlanner:
     def call(self, prompt):
         cfg = self.settings
         try:
-            spec = importlib.util.spec_from_file_location("existing_local_ruflo_adapter", cfg["adapter"])
-            adapter = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(adapter)
+            adapter = self.load_adapter()
             with adapter.ReasoningGateway(cfg["route_port"]) as routing, adapter.Ruflo(cfg["cwd"], routing) as ruflo:
                 self.check_launcher(ruflo)
+                before = len(routing.records)
                 result = ruflo.call(
                     "agent_execute", agentId=cfg["supervisor"], prompt=prompt, maxTokens=1650,
                     systemPrompt="你是 Ruflo Supervisor。只给出工程规划 JSON 草案，不执行、派发或授权。",
                 )
-                observed = routing.records[-1] if routing.records else {}
+                observations = routing.records[before:]
+                observed = observations[0] if len(observations) == 1 else {}
         except (OSError, RuntimeError, TimeoutError, ImportError, KeyError, AttributeError, AssertionError, queue.Empty) as exc:
             raise PlanError(f"本机 Ruflo 规划调用失败（{type(exc).__name__}）。") from exc
         if result.get("success") is not True or not result.get("output"):
@@ -198,8 +237,8 @@ class LocalPlanner:
             if status:
                 raise PlanError(f"Ruflo agent_execute 未返回计划，模型路由 HTTP {status}。")
             raise PlanError("Ruflo agent_execute 未返回计划，请检查 Supervisor 注册及本机模型通道。")
-        if observed.get("http_status") != 200 or observed.get("response_model") != result.get("model"):
-            raise PlanError("规划响应缺少可验证的原模型路由证据，原有计划已保留。")
+        if not route_matches(result, observed):
+            raise PlanError("规划响应缺少与本次调用匹配的原模型路由证据，原有计划已保留。")
         raw = result["output"].strip()
         fence = chr(96) * 3
         if raw.startswith(fence) and raw.endswith(fence) and "\n" in raw:
