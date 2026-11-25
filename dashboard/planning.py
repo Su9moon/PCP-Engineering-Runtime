@@ -10,6 +10,7 @@ import types
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
+from sealed_modules import ModuleProofError, SealedModules
 from sources import now
 
 MODES = ("suggestion", "manual", "autonomous")
@@ -121,7 +122,7 @@ class LocalPlanner:
         self.settings = settings
         self.lock = threading.Lock()
 
-    def verified_adapter(self):
+    def verified_artifacts(self):
         if not self.settings or os.environ.get("CLAUDE_FLOW_ROUTER_FALLBACK_MAX_RETRIES") != "0":
             return None
         try:
@@ -139,17 +140,14 @@ class LocalPlanner:
                 if hashlib.sha256(content).hexdigest() != item["sha256"]:
                     return None
                 artifacts[role] = content
-            return artifacts["adapter"]
+            return artifacts
         except (KeyError, OSError, TypeError, ValueError):
             return None
 
     def available(self):
-        return self.verified_adapter() is not None
+        return self.verified_artifacts() is not None
 
-    def load_adapter(self):
-        verified = self.verified_adapter()
-        if verified is None:
-            raise PlanError("现有 Ruflo 纯文本入口未配置或与已核验文件不符。")
+    def load_adapter(self, verified, modules):
         cfg = self.settings
         contract = cfg["contract"]
         adapter = types.ModuleType("verified_local_ruflo_adapter")
@@ -161,7 +159,9 @@ class LocalPlanner:
             if args[1:] != expected:
                 raise PlanError("现有 Ruflo 配置命令与已验证的入口不一致。")
             # Retain the existing adapter protocol and launch its audited installed CLI directly.
-            return subprocess.Popen([contract["node"], contract["launcher"]["path"], "mcp", "start"], **options)
+            return subprocess.Popen([contract["node"], "--import", modules.import_url,
+                                     contract["launcher"]["path"], "mcp", "start"],
+                                    pass_fds=tuple(modules.fds), **options)
 
         adapter.subprocess = types.SimpleNamespace(
             Popen=launch, TimeoutExpired=subprocess.TimeoutExpired, PIPE=subprocess.PIPE, DEVNULL=subprocess.DEVNULL,
@@ -220,16 +220,26 @@ class LocalPlanner:
     def call(self, prompt):
         cfg = self.settings
         try:
-            adapter = self.load_adapter()
-            with adapter.ReasoningGateway(cfg["route_port"]) as routing, adapter.Ruflo(cfg["cwd"], routing) as ruflo:
-                self.check_launcher(ruflo)
-                before = len(routing.records)
-                result = ruflo.call(
-                    "agent_execute", agentId=cfg["supervisor"], prompt=prompt, maxTokens=1650,
-                    systemPrompt="你是 Ruflo Supervisor。只给出工程规划 JSON 草案，不执行、派发或授权。",
-                )
-                observations = routing.records[before:]
-                observed = observations[0] if len(observations) == 1 else {}
+            artifacts = self.verified_artifacts()
+            if artifacts is None:
+                raise PlanError("现有 Ruflo 纯文本入口未配置或与已核验文件不符。")
+            with SealedModules(artifacts, cfg["contract"]) as modules:
+                adapter = self.load_adapter(artifacts["adapter"], modules)
+                with adapter.ReasoningGateway(cfg["route_port"]) as routing, adapter.Ruflo(cfg["cwd"], routing) as ruflo:
+                    self.check_launcher(ruflo)
+                    registrations = ruflo.rpc("tools/list", {}).get("tools", [])
+                    if not any(tool.get("name") == "agent_execute" for tool in registrations):
+                        raise PlanError("Ruflo 未注册已核验的 agent_execute 能力。")
+                    compiled = modules.check_compiled()
+                    before = len(routing.records)
+                    result = ruflo.call(
+                        "agent_execute", agentId=cfg["supervisor"], prompt=prompt, maxTokens=1650,
+                        systemPrompt="你是 Ruflo Supervisor。只给出工程规划 JSON 草案，不执行、派发或授权。",
+                    )
+                    observations = routing.records[before:]
+                    observed = observations[0] if len(observations) == 1 else {}
+        except ModuleProofError as exc:
+            raise PlanError(str(exc)) from exc
         except (OSError, RuntimeError, TimeoutError, ImportError, KeyError, AttributeError, AssertionError, queue.Empty) as exc:
             raise PlanError(f"本机 Ruflo 规划调用失败（{type(exc).__name__}）。") from exc
         if result.get("success") is not True or not result.get("output"):
@@ -251,5 +261,6 @@ class LocalPlanner:
             "supervisor": cfg["supervisor"], "model": result.get("model"),
             "messageId": result.get("messageId"), "durationMs": result.get("durationMs"),
             "routeStatus": observed.get("http_status"), "requestedEffort": observed.get("requested_effort"),
+            "compiledModules": compiled,
             "actualEffort": "NOT_EXPOSED_BY_RUNTIME", "observedAt": now(),
         }
