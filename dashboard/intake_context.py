@@ -9,6 +9,8 @@ PCP = "Su9moon/personal-ai-control-plane"
 PCP_COMMIT = "22bae955686f03c5f440cdcd66e13a69f1289f90"
 HANDOFF_COMMIT = "b05d96d2e74b90ff77844aff2b4fe157b6e1f651"
 WORKORDER = "workorders/WO-20261126-001-PCP-ENGINEERING-CONTROL-CENTER-CONVERSATIONAL-INTAKE-V1.1.md"
+PLAN_WORKORDER = "workorders/WO-20261126-002-PCP-ENGINEERING-CONTROL-CENTER-V1.2.md"
+PLAN_WORKORDER_COMMIT = "d7f1ce5f78e70b22aecc6aafc9739e37caa76851"
 BASELINES = (
     ("governance/adr/ADR-2026-11-22-001_pcp-engineering-runtime.md", "工程 Runtime 的集成范围与 EO/ES 职责"),
     ("processes/experience-reuse-gate.md", "经验检索顺序与证据权限"),
@@ -18,7 +20,8 @@ PROJECT_FILES = (
     ("AGENTS.md", "仓库执行规则"),
     ("README.md", "项目边界与集成入口"),
     ("PROJECT_STATUS.md", "最近的已提交实现和验收状态"),
-    (WORKORDER, "本次对话入口的实施和验收边界"),
+    (WORKORDER, "对话入口与已部署 V1.1 的范围"),
+    (PLAN_WORKORDER, "工程规划、人工编排与执行边界"),
 )
 EXPERIENCE_PATHS = (
     ("assets/validated", "VALIDATED", True),
@@ -98,8 +101,9 @@ class ProjectContext:
         else:
             for path, reason in PROJECT_FILES:
                 source = git_source(self.project_repo, PROJECT, revision, path, "PROJECT", True, reason, terms)
-                if source is None and path == WORKORDER:
-                    source = git_source(self.project_repo, PROJECT, self.handoff_commit, path, "PROJECT", True, reason, terms)
+                handoff = {WORKORDER: self.handoff_commit, PLAN_WORKORDER: PLAN_WORKORDER_COMMIT}.get(path)
+                if source is None and handoff:
+                    source = git_source(self.project_repo, PROJECT, handoff, path, "PROJECT", True, reason, terms)
                 if source:
                     items.append(source)
                 else:

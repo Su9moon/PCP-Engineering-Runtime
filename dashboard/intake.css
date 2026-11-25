@@ -22,3 +22,7 @@
 .intake-source-search .search { min-width: min(200px,100%); }
 .intake-document-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 490px; overflow: auto; padding: 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.55; }
 @media (max-width: 900px) { .intake-grid { grid-template-columns: 1fr; } }
+
+.orchestration-field { display: grid; gap: 4px; margin: 8px 0; }
+.orchestration-input { min-width: 0; max-width: 100%; width: 100%; }
+.intake-workspace .table-wrap td { white-space: normal; overflow-wrap: anywhere; min-width: 6rem; }

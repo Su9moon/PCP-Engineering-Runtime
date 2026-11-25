@@ -17,6 +17,7 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/intake.js": ("intake.js", "text/javascript; charset=utf-8"),
+    "/plan.js": ("plan.js", "text/javascript; charset=utf-8"),
     "/intake.css": ("intake.css", "text/css; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
@@ -134,8 +135,11 @@ class Handler(BaseHTTPRequestHandler):
         ident = path.removeprefix("/api/intake/") if path != "/api/intake" else None
         if ident is not None:
             intake.path(ident)
+        local_planner = address == "127.0.0.1" and ipaddress.IPv4Address(self.client_address[0]).is_loopback
         if not write:
-            return intake.read(ident)
+            result = intake.read(ident)
+            result["capabilities"]["plannerAvailable"] &= local_planner
+            return result
         if self.headers.get_content_type() != "application/json":
             raise IntakeError("请使用 JSON 提交草稿。", 415)
         try:
@@ -147,7 +151,11 @@ class Handler(BaseHTTPRequestHandler):
             raise IntakeError("草稿请求格式错误。") from exc
         if not isinstance(data, dict):
             raise IntakeError("草稿请求格式错误。")
-        return intake.update(ident, data)
+        if data.get("action") == "plan_generate" and not local_planner:
+            raise IntakeError("通过 cbnet 本机地址打开 Dashboard 后可请求 Ruflo 规划。", 403)
+        result = intake.update(ident, data)
+        result["capabilities"]["plannerAvailable"] &= local_planner
+        return result
 
 
 def main():

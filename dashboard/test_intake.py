@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from intake import Intake, IntakeError
-from intake_context import BASELINES, PCP, WORKORDER, ProjectContext
+from intake_context import BASELINES, PCP, PLAN_WORKORDER, WORKORDER, ProjectContext
 from sources import PROJECT
 
 
@@ -51,6 +51,7 @@ class IntakeTests(unittest.TestCase):
             "README.md": "# Runtime\nProject context",
             "PROJECT_STATUS.md": "# Status\nVerified project facts",
             WORKORDER: "# Workorder\nActive",
+            PLAN_WORKORDER: "# Planning workorder\nActive",
         })
         self.settings = {"directory": str(self.root / "private"), "pcp_repo": str(self.pcp)}
         self.intake = self.open_store()

@@ -53,7 +53,7 @@ function showIntake(index, session) {
   async function change(payload) {
     if (intakeBusy) return false;
     intakeBusy = true;
-    notice.textContent = "正在保存…";
+    notice.textContent = payload.action === "plan_generate" ? "正在请求本机 Ruflo Supervisor…" : "正在保存…";
     try {
       const updated = await intakeApi(draft?.id, draft ? {...payload, version: draft.version} : payload);
       if (intakeRoute()?.[1] !== draft?.id) return true;
@@ -110,7 +110,8 @@ function showIntake(index, session) {
   const workspace = node("div", "intake-workspace",
     headline, warnings, notice, history,
     node("div", "intake-grid", conversation, draft ? intakeDossier(draft, caps, change) : null),
-    draft ? intakeDocuments(draft, session.status, caps, change) : null);
+    draft ? intakeDocuments(draft, session.status, caps, change) : null,
+    draft ? intakePlanning(draft, session.status, caps, change) : null);
   container.replaceChildren(workspace);
 }
 

@@ -39,3 +39,11 @@ The active service uses a private intake-drafts directory beside dashboard.json.
 Generate a package to preview and download the combined requirement brief and the EO Job and Workorder YAML drafts. Confirming a revision records a local document decision. Current deployment has no authorized EO write interface and no configured Intake LLM endpoint, model, or authentication. Manual capture, source retrieval, revision and export work through the same local and LAN HTTPS service.
 
 Run python3 -B -m unittest discover -s dashboard -v for the targeted backend tests. Browser evidence covers task entry, manual conversation, source provenance, export, stale revision handling and reopening the saved draft across refresh, a fresh Edge context and a real service restart.
+
+## V1.2 engineering planning
+
+In the existing Intake workspace, confirm the current requirements document before generating or editing an engineering plan. The local HTTPS listener can ask the configured existing Ruflo Supervisor for a proposal. The server sends the confirmed dossier, document revision and exact source references. It validates the returned JSON before storing a suggested plan in the same intake draft. LAN clients can read and edit drafts and cannot invoke the model. The plan panel records the actual Supervisor, response model, receipt ID and requested effort. Response effort is reported as unexposed.
+
+The plan versions maintain task dependencies, manual order, proposed Worker configuration, risk and proposed authorization. Suggestion, Manual and Autonomous mode are local planning choices. Confirming a plan records a document decision. The current deployment lacks an authorized EO creation path and an effective ES authorization/dispatch link. The dashboard presents existing run and review data as source-owned evidence and shows that an unbound plan has no corresponding Run or Worker.
+
+The enabled private intake.planner configuration refers to the existing local Ruflo adapter, Supervisor working directory and observed loopback route. The same service still serves 127.0.0.1:8787 and 192.168.5.4:8787. To stop or restart it, use systemctl --user stop pcp-dashboard-v1.service or systemctl --user restart pcp-dashboard-v1.service. Browser viewing uses the same TLS certificate and LAN boundary.

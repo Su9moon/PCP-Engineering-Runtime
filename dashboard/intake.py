@@ -1,5 +1,4 @@
 """Project-local, resumable conversational intake drafts and EO exports."""
-import hashlib
 import json
 import os
 import re
@@ -12,6 +11,7 @@ from subprocess import TimeoutExpired
 import yaml
 
 from intake_context import ProjectContext
+from planning import LocalPlanner, PlanError, draft_basis as basis, new_revision, normalize_plan
 from sources import PROJECT, now
 
 FIELDS = {
@@ -47,12 +47,6 @@ def text_input(value, limit=5000):
     if SECRET.search(value):
         raise IntakeError("内容疑似包含凭据。请移除密码、密钥或令牌再保存。")
     return value.strip()
-
-
-def basis(draft):
-    evidence = [draft["project"], draft["messages"], draft["dossier"], draft["context"]]
-    content = json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(content.encode()).hexdigest()
 
 
 def dossier_value(draft, field):
@@ -144,10 +138,13 @@ class Intake:
             raise OSError("Intake data directory must be private and must not be a symlink")
         self.context = ProjectContext(project_repo, settings["pcp_repo"])
         self.templates, self.eo_gap = eo_templates(eo_repo)
+        self.planner = LocalPlanner(settings.get("planner"))
         self.lock = threading.Lock()
 
     def config_view(self):
-        return {"project": PROJECT, "fields": FIELDS, "provenance": PROVENANCE, "llmGap": LLM_GAP, "eoGap": self.eo_gap}
+        return {"project": PROJECT, "fields": FIELDS, "provenance": PROVENANCE, "llmGap": LLM_GAP,
+                "eoGap": self.eo_gap, "plannerAvailable": self.planner.available(),
+                "executionGap": "该草稿未关联正式 EO Workorder 或有效 ES 授权。Autoloop 派发与运行控制尚未接通。"}
 
     def path(self, ident):
         if not ID.fullmatch(ident):
@@ -217,6 +214,8 @@ class Intake:
             return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
 
     def update(self, ident, body):
+        if ident is not None and body.get("action") == "plan_generate":
+            return self.generate_plan(ident, body)
         with self.lock:
             if ident is None:
                 if body.get("action") != "message":
@@ -224,13 +223,49 @@ class Intake:
                 draft = self.create(body.get("text"))
             else:
                 draft = self.load(ident)
-                if type(body.get("version")) is not int or body["version"] != draft["version"]:
-                    raise IntakeError("草稿已有新版本，请重新打开后再提交。", 409)
+                self.check_version(draft, body)
                 self.apply(draft, body)
                 draft["version"] += 1
                 draft["updatedAt"] = now()
                 self.save(draft)
             return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
+
+    @staticmethod
+    def check_version(draft, body):
+        if type(body.get("version")) is not int or body["version"] != draft["version"]:
+            raise IntakeError("草稿已有新版本，请重新打开后再提交。", 409)
+
+    @staticmethod
+    def confirmed_package(draft):
+        if review_state(draft) != "confirmed":
+            raise IntakeError("请先确认当前工程文档版本。", 409)
+        return draft["packages"][-1]
+
+    def generate_plan(self, ident, body):
+        with self.lock:
+            draft = self.load(ident)
+            self.check_version(draft, body)
+            package = self.confirmed_package(draft)
+            if draft["project"] != PROJECT:
+                raise IntakeError("请先关联当前 Runtime 项目。")
+            prior = (draft.get("plans") or [None])[-1]
+            if (prior and prior["documentRevision"] == package["revision"]
+                    and prior["basis"] == package["basis"] and prior["plan"]["mode"] == "manual"):
+                raise IntakeError("当前是人工编排。请先显式保存为建议模式，再请求 Ruflo 建议。", 409)
+        try:
+            raw, evidence = self.planner.propose(draft, package)
+            plan = normalize_plan(raw, text_input)
+        except PlanError as exc:
+            raise IntakeError(str(exc), 503) from exc
+        with self.lock:
+            current = self.load(ident)
+            self.check_version(current, body)
+            plans = current.setdefault("plans", [])
+            plans.append(new_revision(plans, package, plan, reason="基于当前确认文档生成建议", evidence=evidence))
+            current["version"] += 1
+            current["updatedAt"] = now()
+            self.save(current)
+        return {"draft": current, "status": review_state(current), "capabilities": self.config_view()}
 
     def apply(self, draft, body):
         action = body.get("action")
@@ -270,6 +305,27 @@ class Intake:
                 raise IntakeError("需求或来源已发生变化。请重新生成并预览当前版本。", 409)
             if not packages[-1]["confirmedAt"]:
                 packages[-1]["confirmedAt"] = now()
+        elif action in ("plan_save", "plan_confirm"):
+            package = self.confirmed_package(draft)
+            plans = draft.setdefault("plans", [])
+            if action == "plan_save":
+                try:
+                    plan = normalize_plan(body.get("plan"), text_input)
+                except PlanError as exc:
+                    raise IntakeError(str(exc)) from exc
+                plans.append(new_revision(plans, package, plan, reason=text_input(body.get("reason", ""), 500)))
+            else:
+                if (not plans or type(body.get("revision")) is not int
+                        or plans[-1]["revision"] != body["revision"]
+                        or plans[-1]["documentRevision"] != package["revision"] or plans[-1]["basis"] != package["basis"]):
+                    raise IntakeError("工程计划与当前确认文档不匹配。请保存新的计划版本。", 409)
+                plan = plans[-1]["plan"]
+                if plan["mode"] == "autonomous":
+                    if not plan["scope"]:
+                        raise IntakeError("请先填写自主编排的仓库与路径范围。")
+                    if not plan["authorization"]:
+                        raise IntakeError("请先填写自主编排的拟授权操作。")
+                plans[-1]["confirmedAt"] = plans[-1]["confirmedAt"] or now()
         else:
             raise IntakeError("此草稿操作不可用。")
 
