@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCP Engineering Control Center</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">P</div>
+      <div class="brand-copy">
+        <div class="brand-name">工程控制中心</div>
+        <div class="brand-sub">PCP Engineering Runtime</div>
+      </div>
+    </div>
+    <div>
+      <div class="nav-label">工作空间</div>
+      <nav class="nav" aria-label="工作空间">
+        <a href="#overview" aria-label="总览"><span class="ico" aria-hidden="true">◈</span><span class="nav-text">总览</span></a>
+        <a href="#tasks" aria-label="工程任务"><span class="ico" aria-hidden="true">▤</span><span class="nav-text">工程任务</span></a>
+        <a href="#runs" aria-label="运行记录"><span class="ico" aria-hidden="true">↻</span><span class="nav-text">运行记录</span></a>
+        <a href="#agents" aria-label="Agent 团队"><span class="ico" aria-hidden="true">◎</span><span class="nav-text">Agent 团队</span></a>
+        <a href="#workers" aria-label="执行节点"><span class="ico" aria-hidden="true">▣</span><span class="nav-text">执行节点</span></a>
+        <a href="#reviews" aria-label="交付复核"><span class="ico" aria-hidden="true">✓</span><span class="nav-text">交付复核</span></a>
+      </nav>
+    </div>
+    <div>
+      <div class="nav-label">系统</div>
+      <nav class="nav" aria-label="系统">
+        <a href="#integrations" aria-label="连接与配置"><span class="ico" aria-hidden="true">⌘</span><span class="nav-text">连接与配置</span></a>
+      </nav>
+    </div>
+    <div class="side-bottom"><div class="authority"><div class="avatar" aria-hidden="true">A</div><div class="authority-copy"><b>管理员</b><small>cbnet · Dashboard V1</small></div></div></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="crumb">工程控制中心 / <b id="crumb">总览</b></div>
+      <div class="top-actions"><span class="pill" id="freshness" role="status">正在读取</span><button class="btn small" id="refresh" type="button">刷新</button></div>
+    </header>
+    <div class="content" id="view"><p role="status">正在读取来源记录…</p></div>
+  </main>
+</div>
+<dialog class="drawer" id="detail" aria-labelledby="detail-title">
+  <div class="drawer-top"><h2 id="detail-title">详情</h2><button class="close" id="detail-close" type="button">关闭</button></div>
+  <div id="detail-content"></div>
+</dialog>
+</body>
+</html>
