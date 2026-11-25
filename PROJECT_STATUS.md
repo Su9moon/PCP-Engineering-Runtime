@@ -7,6 +7,17 @@
 - Ruflo control-plane target: `cbnet` / Ubuntu 24.04 / WSL2
 - Execution location: flexible across authorized nodes; do not infer all workers must be on cbnet.
 
+## Dashboard V1.1 conversational intake
+
+- WO-20261126-001 is deployed on the existing pcp-dashboard-v1.service over https://127.0.0.1:8787/ and https://192.168.5.4:8787/. Both endpoints returned HTTP 200 without a login from cbnet WSL. Edge on cbnet verified task-entry navigation. An independent MEC-device test remains open.
+- The task action opens a free-text intake with an editable, provenance-labelled dossier and resumable drafts. The service uses atomic JSON files under ~/.local/state/pcp-control-center/WO-20261125-001/intake-drafts. The directory and files use 0700 and 0600 permissions.
+- The actual browser sample recovered two user turns, confirmed fields, 12 exact Git source references and document revisions after refresh, a clean browser session and a real service restart. The PCP pin is 22bae955686f03c5f440cdcd66e13a69f1289f90. The autoloop/workorder query returned zero matching validated and candidate assets and three matching Inbox references, marked non-authoritative.
+- Three reviewable packages were generated and preserved. The browser exported the latest EO Workorder YAML as DRAFT with unallocated EO IDs. Document confirmation was recorded locally. Existing EO/ES/Autoloop source counts remained 1 workorder, 1 execution and 33 historical runs.
+- Intake has no configured server-side LLM endpoint, model or credential binding. Live adaptive replies and LLM drafting are unavailable. The local EO checkout provides canonical templates and Git records. An authorized EO Job/Workorder creation interface remains unavailable. The dashboard supports manual conversation, template generation, confirmation and export.
+- Backend validation passed 19 Python tests and JS syntax checks. Eighteen browser assertions passed with a real service restart. HTTPS integration checked same-origin intake writes, draft path confinement and rejection of unsupported writes.
+- Actual host evidence recorded Ubuntu 24.04, Bash 5.2.21, Python 3.12.3, and the existing worktree and user service. Local Codex CLI 0.171.0 was invoked directly. Its configured model route returned HTTP 401 Missing bearer, so model review and actual model/effort were NOT_EXPOSED_BY_RUNTIME. Local tests and deployment were verified by the cbnet tools without CB or Tunnel.
+- Workorder and design inputs were retrieved byte-for-byte at b05d96d2e74b90ff77844aff2b4fe157b6e1f651. Original local main and its pending changes were preserved. The V1.1 work continues the deployed dashboard branch.
+
 ## Dashboard V1 continuation
 
 - Workorder WO-20261125-001 is implemented in an isolated worktree based on the existing local main. The original main working tree and the remote main ref were preserved.

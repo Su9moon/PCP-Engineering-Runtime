@@ -136,6 +136,9 @@ class AccessTests(unittest.TestCase):
 
     def test_untrusted_request_has_no_write_method(self):
         class Client:
+            path = "/api/state"
+            reject_write = Handler.reject_write
+
             def payload(self, status, body, **extras):
                 self.status = status
         client = Client()

@@ -1,7 +1,7 @@
 "use strict";
 
 const labels = {
-  overview: "总览", tasks: "工程任务", runs: "运行记录", agents: "Agent 团队",
+  overview: "总览", tasks: "工程任务", runs: "运行记录", agents: "Agent 团队", intake: "工程需求对话",
   workers: "执行节点", reviews: "交付复核", integrations: "连接与配置",
 };
 const statusLabels = {
@@ -225,7 +225,7 @@ function tasksPage() {
   }
   filter();
   return [
-    header("工程任务", "查看 EO 工单及其可证实的 ES 执行记录", optionalAction("新建工程任务")),
+    header("工程任务", "查看 EO 工单及其可证实的 ES 执行记录", link("新建工程任务", "#intake", "btn primary")),
     panel("EO 工单", state.eo.health.detail,
       node("div", "filters", inputFilter("搜索工单、Job 或仓库", "task", filter),
         selectFilter("全部 EO 状态", "taskStatus", [...new Set(tasks.map((task) => task.status).filter(Boolean))], filter)),
@@ -352,6 +352,7 @@ const views = {overview, tasks: tasksPage, runs: runsPage, agents: agentsPage, w
 
 function page() {
   const name = location.hash.slice(1);
+  if (/^intake(?:\/[a-f0-9]{32})?$/.test(name)) return "intake";
   return Object.hasOwn(views, name) ? name : "overview";
 }
 
@@ -361,6 +362,10 @@ function render() {
   for (const item of document.querySelectorAll(".nav a")) {
     if (item.hash === "#" + current) item.setAttribute("aria-current", "page");
     else item.removeAttribute("aria-current");
+  }
+  if (current === "intake") {
+    if (typeof loadIntake === "function") loadIntake();
+    return;
   }
   if (!state) {
     el("view").replaceChildren(node("p", "note", requestError ? "读取失败。请点击刷新重试。" : "正在读取来源记录…"));

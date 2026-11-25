@@ -9,12 +9,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from intake import Intake, IntakeError
 from sources import Sources
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/intake.js": ("intake.js", "text/javascript; charset=utf-8"),
+    "/intake.css": ("intake.css", "text/css; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
@@ -77,6 +80,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.payload(400, b"Invalid request", head=head)
             return
+        if path == "/api/intake" or path.startswith("/api/intake/"):
+            self.intake_request(path, head=head)
+            return
         if path == "/api/state":
             try:
                 state = self.server.sources.snapshot()
@@ -93,9 +99,55 @@ class Handler(BaseHTTPRequestHandler):
         self.payload(200, (ROOT / name).read_bytes(), media_type, head=head)
 
     def do_POST(self):
-        self.payload(405, b"Read-only dashboard", headers=[("Allow", "GET, HEAD")])
+        path = self.path.split("?", 1)[0]
+        if path == "/api/intake" or path.startswith("/api/intake/"):
+            self.intake_request(path, write=True)
+        else:
+            self.reject_write()
 
-    do_PUT = do_PATCH = do_DELETE = do_POST
+    def reject_write(self):
+        self.payload(405, b"Unsupported write", headers=[("Allow", "GET, HEAD")])
+
+    do_PUT = do_PATCH = do_DELETE = reject_write
+
+    def intake_request(self, path, *, write=False, head=False):
+        try:
+            result = self.intake_operation(path, write)
+            status = 200
+        except IntakeError as exc:
+            result, status = {"error": str(exc)}, exc.status
+        except (OSError, ValueError, KeyError, TypeError):
+            result, status = {"error": "本机 Intake 草稿当前不可读写。"}, 503
+        body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        self.payload(status, body, "application/json; charset=utf-8", head=head)
+
+    def intake_operation(self, path, write):
+        if not (intake := getattr(self.server, "intake", None)):
+            raise IntakeError("此部署的 Intake 草稿存储未启用或无法打开。", 503)
+        address, port = self.server.server_address
+        origin = self.headers.get("Origin")
+        hosts = {f"{address}:{port}"}
+        if address == "127.0.0.1":
+            hosts.add(f"localhost:{port}")
+        if self.headers.get("Host") not in hosts or (origin and origin not in {f"https://{host}" for host in hosts}):
+            raise IntakeError("请使用已配置的 Dashboard HTTPS 地址。", 403)
+        ident = path.removeprefix("/api/intake/") if path != "/api/intake" else None
+        if ident is not None:
+            intake.path(ident)
+        if not write:
+            return intake.read(ident)
+        if self.headers.get_content_type() != "application/json":
+            raise IntakeError("请使用 JSON 提交草稿。", 415)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 65536:
+                raise IntakeError("草稿请求超出大小限制。", 413)
+            data = json.loads(self.rfile.read(length))
+        except ValueError as exc:
+            raise IntakeError("草稿请求格式错误。") from exc
+        if not isinstance(data, dict):
+            raise IntakeError("草稿请求格式错误。")
+        return intake.update(ident, data)
 
 
 def main():
@@ -107,8 +159,15 @@ def main():
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls["cert"], tls["key"])
     sources = Sources(config["sources"], ROOT.parent)
+    intake = None
+    if settings := config.get("intake"):
+        try:
+            intake = Intake(settings, ROOT.parent, config["sources"].get("eo"))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"Dashboard Intake unavailable: {type(exc).__name__}", flush=True)
     with ExitStack() as stack:
         local = stack.enter_context(DashboardServer(config["port"], sources, context))
+        local.intake = intake
         if lan := config.get("lan"):
             try:
                 private = stack.enter_context(DashboardServer(
@@ -118,6 +177,7 @@ def main():
                 print(f"Dashboard LAN listener unavailable at {lan['address']}: {exc.strerror}", flush=True)
             else:
                 print(f"Dashboard V1 HTTPS listening on {private.server_address[0]}:{private.server_address[1]}", flush=True)
+                private.intake = intake
                 threading.Thread(target=private.serve_forever, daemon=True).start()
         print(f"Dashboard V1 HTTPS listening on {local.server_address[0]}:{local.server_address[1]}", flush=True)
         local.serve_forever()

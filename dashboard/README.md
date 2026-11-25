@@ -29,3 +29,13 @@ The Windows-side local endpoint is https://127.0.0.1:8787/. The LAN endpoint is 
 ## Focused checks
 
 Run python3 -B -m unittest discover -s dashboard -v from the repository root. The eleven tests cover EO scope and drafts, ES correlation, Autoloop live/offline identity mapping, source credential transport, listener and client network scope, direct page access and the absence of HTTP write methods. The browser acceptance checks use the running HTTPS service and cover seven views, actual records, dialogs, filters, write-control explanations and responsive layout.
+
+## V1.1 conversational intake
+
+Open **工程任务 → 新建工程任务** or /#intake. The workspace saves free-text turns and requirement fields in a resumable local draft. Select the Runtime project to load its committed context and the pinned PCP baseline, then use task-specific keywords to retrieve experience in maturity order. Candidate and Inbox material stays visible as non-authoritative evidence in the brief. It is excluded from the EO input references.
+
+The active service uses a private intake-drafts directory beside dashboard.json. Set intake.directory and intake.pcp_repo in the service configuration to enable this feature in another existing installation. The store uses 0700 directory permissions, 0600 draft files, atomic replacement, and draft-version checks for concurrent tabs. Every generated package keeps its source references, revision, and confirmation timestamp.
+
+Generate a package to preview and download the combined requirement brief and the EO Job and Workorder YAML drafts. Confirming a revision records a local document decision. Current deployment has no authorized EO write interface and no configured Intake LLM endpoint, model, or authentication. Manual capture, source retrieval, revision and export work through the same local and LAN HTTPS service.
+
+Run python3 -B -m unittest discover -s dashboard -v for the targeted backend tests. Browser evidence covers task entry, manual conversation, source provenance, export, stale revision handling and reopening the saved draft across refresh, a fresh Edge context and a real service restart.
