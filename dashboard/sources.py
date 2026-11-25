@@ -421,7 +421,7 @@ class Sources:
             "observedAt": now(), "actions": ACTIONS, "eo": eo, "es": es, "hubs": hubs, "ruflo": ruflo,
             "supervisor": supervisor, "commits": commits,
             "connections": [
-                observed("Dashboard HTTPS", "connected", "当前请求已通过单管理员身份验证。"),
+                observed("Dashboard HTTPS", "connected", "仅通过 cbnet 本机访问，打开即用。"),
                 observed("GitHub", "unverified", "提供 GitHub 源码定位。当前仅核验本机 Git 对象。"),
                 observed("GPT ↔ Ruflo", "deferred", "直接管理延期到下一版本。"),
             ],

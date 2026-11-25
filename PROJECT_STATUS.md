@@ -13,7 +13,7 @@
 - The delivered original design exactly matches SHA-256 2325e82b6d39daa6039a108595751cb1ed7ee8c6b251a5baf4ee15ba73107232. The seven Chinese-language views use its navigation and visual styling.
 - Verified data includes 1 EO Workorder, 1 local draft EO Result, 1 existing ES Execution and 33 historical Autoloop Runs across two Hub projections. Both Hub live probes were offline. EO/ES/provider write controls remain unavailable with explicit reasons.
 - Local Ruflo 3.80.0 supplied the implementation directive via the original Supervisor. The runtime reported gpt-6.2-sol. Response reasoning effort is NOT_EXPOSED_BY_RUNTIME. The Dashboard MCP probe was connected and its agent_list returned zero registrations for that stdio session.
-- Dashboard HTTPS is active at https://127.0.0.1:8787/ and listening at https://192.168.5.4:8787/. Local browser validation and 9 targeted Python tests passed. MEC access remains unverified because the session lacked privilege for the scoped Windows Hyper-V inbound rule.
+- Personal Dashboard HTTPS is active at https://127.0.0.1:8787/. It opens without login and serves only the local loopback listener.
 - Next version backlog is GPT ↔ Ruflo direct management over a secure and authorized Runtime Gateway. There is no Gateway, Tunnel or ChatGPT connector in this delivery.
 - Deployment and validation details are in [dashboard/README.md](dashboard/README.md).
 

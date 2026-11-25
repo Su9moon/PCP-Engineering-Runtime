@@ -1,5 +1,5 @@
 """Focused V1 source mapping and read-boundary regression checks."""
-import ipaddress
+import ssl
 import sqlite3
 import subprocess
 import tempfile
@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib import error
 
-from serve import DashboardServer, Handler, password_from
+from serve import DashboardServer, Handler
 from sources import archived_hub, eo_records, es_records, hub_state, provider
 
 
@@ -101,21 +101,24 @@ class SourceTests(unittest.TestCase):
 
 
 class AccessTests(unittest.TestCase):
-    def test_password_permissions_and_length(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            file = Path(tmp) / "password"
-            file.write_text("a" * 25)
-            file.chmod(0o644)
-            with self.assertRaises(ValueError):
-                password_from(file)
-            file.chmod(0o600)
-            self.assertEqual(password_from(file), "a" * 25)
+    def test_server_binds_to_loopback(self):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        with DashboardServer(0, None, context) as server:
+            self.assertEqual(server.server_address[0], "127.0.0.1")
 
-    def test_only_configured_client_networks_are_allowed(self):
-        class Server:
-            networks = [ipaddress.ip_network("192.168.5.0/24"), ipaddress.ip_network("127.0.0.1/32")]
-        for address, allowed in (("192.168.5.3", True), ("127.0.0.1", True), ("192.168.6.3", False), ("198.51.100.1", False)):
-            self.assertEqual(DashboardServer.verify_request(Server(), None, (address, 50000)), allowed)
+    def test_dashboard_can_be_read_without_login(self):
+        class Client:
+            path = "/"
+
+            def payload(self, status, body, media_type, **extras):
+                self.response = status, body, media_type
+
+        client = Client()
+        Handler.read(client, head=False)
+        status, body, media_type = client.response
+        self.assertEqual(status, 200)
+        self.assertIn(b'id="view"', body)
+        self.assertTrue(media_type.startswith("text/html"))
 
     def test_untrusted_request_has_no_write_method(self):
         class Client:

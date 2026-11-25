@@ -1,13 +1,7 @@
-"""Serve Dashboard V1 to one administrator on a private HTTPS listener."""
+"""Serve the personal Dashboard V1 over loopback HTTPS."""
 import argparse
-import base64
-import binascii
-import hmac
-import ipaddress
 import json
 import ssl
-import threading
-from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -22,30 +16,13 @@ STATIC = {
 }
 CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
 
-
-def password_from(path):
-    file = Path(path)
-    if file.stat().st_mode & 0o077:
-        raise ValueError("Dashboard password file must be private (0600)")
-    value = file.read_text(encoding="utf-8").strip()
-    if len(value) < 24 or not value.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in value):
-        raise ValueError("Dashboard password must have at least 24 printable ASCII characters")
-    return value
-
-
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, endpoint, networks, password, sources, context):
-        self.networks = networks
-        self.credential = ("admin:" + password).encode("ascii")
+    def __init__(self, port, sources, context):
         self.sources = sources
-        super().__init__(endpoint, Handler)
+        super().__init__(("127.0.0.1", port), Handler)
         self.socket = context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=False)
-
-    def verify_request(self, request, client_address):
-        address = ipaddress.ip_address(client_address[0])
-        return any(address in network for network in self.networks)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -73,17 +50,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             self.wfile.write(body)
-
-    def authorized(self):
-        method, _, encoded = self.headers.get("Authorization", "").partition(" ")
-        if method.lower() != "basic":
-            return False
-        try:
-            given = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error):
-            return False
-        return hmac.compare_digest(given, self.server.credential)
-
     def do_GET(self):
         self.read(False)
 
@@ -91,10 +57,6 @@ class Handler(BaseHTTPRequestHandler):
         self.read(True)
 
     def read(self, head):
-        if not self.authorized():
-            self.payload(401, b"Dashboard authentication required",
-                         headers=[("WWW-Authenticate", 'Basic realm="PCP Dashboard V1"')], head=head)
-            return
         try:
             path = urlsplit(self.path).path
         except ValueError:
@@ -129,27 +91,10 @@ def main():
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls["cert"], tls["key"])
-    password = password_from(tls["password_file"])
     sources = Sources(config["sources"], ROOT.parent)
-    private = [ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")]
-    listeners = config["listeners"]
-    if not listeners:
-        raise ValueError("Configure at least one HTTPS listener")
-    with ExitStack() as stack:
-        servers = []
-        for listener in listeners:
-            address = ipaddress.ip_address(listener["address"])
-            if not any(address in network for network in private):
-                raise ValueError("Bind HTTPS to an explicit private IPv4 or loopback address")
-            networks = [ipaddress.ip_network(value) for value in listener["allow_clients"]]
-            if not networks or not all(any(network.subnet_of(net) for net in private if network.version == net.version) for network in networks):
-                raise ValueError("Specify private IPv4 client networks")
-            server = stack.enter_context(DashboardServer((str(address), listener["port"]), networks, password, sources, context))
-            servers.append(server)
-            print(f"Dashboard V1 HTTPS listening on {address}:{listener['port']}", flush=True)
-        for server in servers[1:]:
-            threading.Thread(target=server.serve_forever, daemon=True).start()
-        servers[0].serve_forever()
+    with DashboardServer(config["port"], sources, context) as server:
+        print(f"Dashboard V1 HTTPS listening on {server.server_address[0]}:{server.server_address[1]}", flush=True)
+        server.serve_forever()
 
 
 if __name__ == "__main__":
