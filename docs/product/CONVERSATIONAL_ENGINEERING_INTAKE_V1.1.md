@@ -1,7 +1,7 @@
 # Conversational Engineering Intake — Design V1.1
 
 - Date: 2026-11-26
-- Status: **DESIGN DRAFT — user accepted the product direction; detailed UI and runtime integration remain subject to review**
+- Status: **DESIGN DRAFT — user accepted the product direction; 2026-11-26 revision makes durable cross-session continuation and evidence-backed project experience reuse required implementation outcomes**
 - Product: PCP Engineering Control Center
 - Parent design: \`design/pcp-engineering-control-center-demo.html\`
 - Companion prototype: \`design/pcp-engineering-control-center-conversational-intake-demo.html\`
@@ -12,12 +12,13 @@ Replace the conventional **New Engineering Task** form/modal with a **Conversati
 
 The user starts with an outcome, problem, or rough idea. The assistant progressively clarifies the requirement through adaptive multi-turn dialogue. The user does not need to know EO schemas, technical workorder formats, Agent roles, or execution settings.
 
-The experience has four linked outputs:
+The experience has five linked outputs:
 
 1. Conversation — understand intent and clarify the most important missing information.
 2. Requirement dossier — maintain a live, editable summary with provenance.
 3. Engineering document package — generate draft documents from the dossier.
 4. Canonical EO work item — create the EO Job/Workorder only after explicit user confirmation.
+5. Continuity and project context — preserve the intake across sessions and reuse relevant project baselines and experience with visible source provenance.
 
 **Conversation is the entry point; the dossier is the working summary; approved documents are the durable project artifacts; EO remains the canonical engineering-work authority.**
 
@@ -93,20 +94,54 @@ Documents are drafts until the user explicitly confirms them. The system must su
 
 ## 5. Project context and persistence
 
-- Use the existing project/repository selection and exact project references where available.
-- Reuse approved baselines and relevant validated experience. Candidate and Inbox material remain evidence, not authoritative requirements.
-- Conversation is a working interface, not a new canonical task database or universal memory store.
-- Do not introduce a new task ledger, scheduler, Worker Pool, Agent Memory platform, or database solely for this feature.
-- Draft persistence, final document destination, and session-resume behavior must reuse an existing project/file capability if one is already available. If not, surface the exact gap rather than inventing a new persistence subsystem.
-- Final approved documents should be exportable and associated with the selected project. Do not auto-commit or push without the existing authorized Git workflow.
+### 5.1 Project selection and context
+
+- Use the existing project/repository selector and registry. Preserve the selected project's exact repository identity, local workspace reference and relevant branch/commit when available.
+- For the selected project, load only its relevant `AGENTS.md`, README/status, current baseline, active workorder, applicable decisions and directly related implementation/evidence.
+- Reuse exact repository/path/commit references in the dossier and generated documents. Never invent a project identity, branch, commit or source.
+- If no project is selected, clarify whether this is a new project or work on an existing one before assigning a project identity.
+
+### 5.2 Experience retrieval and maturity
+
+- Reuse the PCP experience process at `Su9moon/personal-ai-control-plane:processes/experience-reuse-gate.md`.
+- Retrieve in this order: approved governance/baselines and validated assets; then relevant candidates; consult Inbox sources only when the first searches do not resolve the task context.
+- Approved governance and validated assets may guide the work as approved guidance. Candidate and Inbox assets are evidence only; never silently promote them into requirements or authoritative instructions.
+- Search only for terms and concepts relevant to the current requirement, within the selected project and the applicable PCP experience paths. Do not scan all repositories or the full experience store on every turn.
+- Show each material reused source with its exact repository/path and commit/ref when available, plus its maturity/authority status and why it is relevant. Distinguish project facts from reusable experience and AI interpretation.
+- If a source cannot be accessed, state the exact unavailable source/capability. Do not claim that experience retrieval succeeded when it did not.
+
+### 5.3 Durable intake sessions
+
+- Treat each intake as a resumable draft, not an ephemeral chat.
+- Persist the conversation transcript, selected project/repository identity, dossier fields and their provenance, unresolved questions, source references, generated document package and version history, approval state, and last-updated timestamp.
+- Automatically save after each user/assistant turn and after dossier or document changes.
+- Provide a visible list of recent/in-progress intake drafts. The user can reopen one and continue from its last saved state after page refresh, a new browser session, or Dashboard service restart.
+- On resume, restore confirmed facts, provenance, relevant source references, unresolved questions and document versions. Do not repeat already answered questions unless the user changes the requirement or the source facts have changed.
+- Keep separate projects' intake context isolated. Never silently carry one project's requirements or evidence into another project's session.
+
+### 5.4 Persistence implementation boundary
+
+- Inspect the existing Dashboard backend, database and project/file storage first; reuse the existing persistence capability when suitable.
+- If no suitable persistence exists, implement only the smallest server-side, project-local draft store using the Dashboard's existing application-data boundary (for example, atomic JSON files in its private data directory). This is a bounded feature implementation, not a new general database, task ledger, Agent Memory platform or persistence service.
+- Use generated session identifiers, server-side path confinement and the application's existing access/session boundary. Do not store API keys, credentials or secrets in transcripts or draft records.
+- Do not use browser localStorage as the sole durable store, and do not write active conversation state into tracked source files.
+- If a real technical or permission constraint prevents durable persistence, report the exact blocker and do not mark cross-session continuation complete. Continue independent UI, dialogue and export work where possible.
+
+### 5.5 Approved documents
+
+- Final approved documents should be exportable and associated with the selected project using an existing authorized file/Git workflow.
+- Preserve prior document revisions when regenerating; do not silently overwrite an approved or previously reviewed version.
+- Do not auto-commit or push without the existing authorized Git workflow.
 
 ## 6. Main workspace layout
 
-- Primary area: conversation timeline, assistant messages, user replies, optional suggestion chips, free-text composer.
-- Side area: live requirement dossier, provenance labels, AI suggestions and unresolved questions.
+- Primary area: conversation timeline, assistant messages, user replies, optional suggestion chips and free-text composer.
+- Side area: live editable requirement dossier, provenance labels, unresolved questions, AI suggestions/inferences and the sources reused from project baselines/experience.
 - Document area: generated package, per-document preview, revision/regeneration and approval state.
+- Session area: recent/in-progress drafts with project identity, last-updated time and a clear resume action.
+- Source references must be inspectable; show exact repository/path and ref/commit where available, not merely a generic "knowledge used" indicator.
 - Primary entry: existing **New Engineering Task** action opens this conversation workspace.
-- Keep the existing seven dashboard sections and their source-of-truth boundaries intact.
+- Keep the existing seven Dashboard sections and their source-of-truth boundaries intact.
 
 ## 7. LLM provider boundary
 
@@ -121,15 +156,19 @@ The concrete provider, endpoint, model and credential source remain an implement
 
 ## 8. V1.1 design prototype boundary
 
-The companion HTML is an interaction prototype only. It simulates dialogue, dossier updates, document preview and explicit confirmation in browser memory.
+The companion HTML is an interaction prototype only. It simulates dialogue, dossier updates and document preview in browser memory.
 
 It does **not**:
 - call a live LLM;
-- persist conversation sessions;
+- retrieve live project baselines or PCP experience;
+- persist or resume intake sessions across browser sessions/restarts;
+- maintain durable document revision history;
 - write EO Job/Workorder records;
 - create ES executions or authorize workers;
 - connect to Ruflo or Autoloop;
 - deploy or change the cbnet Dashboard service.
+
+The production implementation must not treat the prototype's scripted replies, in-memory state or simulated buttons as evidence that these capabilities are connected.
 
 ## 9. Architecture governance and experience reuse
 
@@ -150,11 +189,14 @@ Experience reuse: **REUSE / EXTEND**, scope **PROJECT_LOCAL**. Reuse the existin
 
 ## 10. Open implementation decisions
 
-These are deliberately not guessed by the design:
+These are implementation facts to inspect in the actual local Dashboard workspace, not reasons to downgrade the accepted product behavior:
 
-1. Which existing LLM API/provider configuration should power the dialogue.
-2. Which existing project/file mechanism should persist an in-progress draft and approved document package.
-3. The exact local Dashboard implementation branch and current runtime state; the executor must inspect the user's actual local workspace before editing.
+1. Which existing LLM API/provider configuration can power live dialogue and document drafting.
+2. Which existing project/repository and PCP experience retrieval interfaces are already available to the Dashboard, and what exact read access they provide.
+3. Which existing Dashboard database/application-data directory should persist resumable intake sessions; if none is suitable, use the bounded project-local server-side store described in Section 5.4.
+4. The exact local Dashboard implementation branch, current runtime state and existing service boundary; the executor must inspect the user's actual local workspace before editing.
+
+Do not guess a provider, source connection, storage path, branch or runtime fact. Report exact gaps while completing independent work.
 
 ## 11. Design acceptance
 
@@ -164,7 +206,11 @@ These are deliberately not guessed by the design:
 - The dossier visibly distinguishes user-confirmed, AI-suggested, AI-inferred and unresolved items.
 - Users can correct the dossier and change direction.
 - A document package can be generated while retaining explicit unresolved items.
-- Documents can be previewed and revised before confirmation.
+- Documents can be previewed and revised before confirmation; regeneration preserves prior document revisions.
+- An intake draft is automatically persisted and can be reopened after refresh, a new browser session and Dashboard service restart.
+- Resume restores the transcript, selected project, dossier provenance, unresolved questions, source references and document revisions without losing confirmed facts.
+- Relevant project baselines and experience are retrieved using the approved-governance/validated/candidate/Inbox maturity order; exact source paths and refs are visible.
+- Candidate and Inbox material is never presented as authoritative guidance; inaccessible sources are reported honestly.
 - Explicit user confirmation is required before EO Job/Workorder creation.
 - No ES execution or Ruflo/Autoloop run is created by the intake flow.
 - The prototype labels all simulated operations truthfully and does not claim backend integration.
