@@ -1,7 +1,10 @@
-"""Serve the personal Dashboard V1 over loopback HTTPS."""
+"""Serve the personal Dashboard V1 over loopback and private LAN HTTPS."""
 import argparse
+import ipaddress
 import json
 import ssl
+import threading
+from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -15,14 +18,25 @@ STATIC = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+PRIVATE_NETWORKS = tuple(ipaddress.IPv4Network(value) for value in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+))
+
 
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, sources, context):
+    def __init__(self, port, sources, context, *, address="127.0.0.1", clients="127.0.0.0/8"):
+        self.clients = ipaddress.IPv4Network(clients)
+        bind = ipaddress.IPv4Address(address)
+        if bind not in self.clients or not any(self.clients.subnet_of(private) for private in PRIVATE_NETWORKS):
+            raise ValueError("Listener and client network must share an explicit private IPv4 subnet")
         self.sources = sources
-        super().__init__(("127.0.0.1", port), Handler)
+        super().__init__((str(bind), port), Handler)
         self.socket = context.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=False)
+
+    def verify_request(self, request, client_address):
+        return ipaddress.IPv4Address(client_address[0]) in self.clients
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -50,6 +64,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not head:
             self.wfile.write(body)
+
     def do_GET(self):
         self.read(False)
 
@@ -92,9 +107,20 @@ def main():
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls["cert"], tls["key"])
     sources = Sources(config["sources"], ROOT.parent)
-    with DashboardServer(config["port"], sources, context) as server:
-        print(f"Dashboard V1 HTTPS listening on {server.server_address[0]}:{server.server_address[1]}", flush=True)
-        server.serve_forever()
+    with ExitStack() as stack:
+        local = stack.enter_context(DashboardServer(config["port"], sources, context))
+        if lan := config.get("lan"):
+            try:
+                private = stack.enter_context(DashboardServer(
+                    config["port"], sources, context, address=lan["address"], clients=lan["clients"],
+                ))
+            except OSError as exc:
+                print(f"Dashboard LAN listener unavailable at {lan['address']}: {exc.strerror}", flush=True)
+            else:
+                print(f"Dashboard V1 HTTPS listening on {private.server_address[0]}:{private.server_address[1]}", flush=True)
+                threading.Thread(target=private.serve_forever, daemon=True).start()
+        print(f"Dashboard V1 HTTPS listening on {local.server_address[0]}:{local.server_address[1]}", flush=True)
+        local.serve_forever()
 
 
 if __name__ == "__main__":

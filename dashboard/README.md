@@ -16,16 +16,16 @@ The dashboard's only enabled actions are read and navigation actions. EO create 
 
 ## Local deployment
 
-Run dashboard/serve.py with Python 3.12 and PyYAML on the existing cbnet WSL distribution. The installed user service is pcp-dashboard-v1.service. Its configuration is outside Git, under ~/.local/state/pcp-control-center/WO-20261125-001. The config has port, tls and sources entries. It uses the existing EO directory, ES database, Autoloop configurations and projections, and Ruflo stdio configuration.
+Run dashboard/serve.py with Python 3.12 and PyYAML on the existing cbnet WSL distribution. The installed user service is pcp-dashboard-v1.service. Its configuration is outside Git, under ~/.local/state/pcp-control-center/WO-20261125-001. The config has port, tls, sources and optional lan entries. It uses the existing EO directory, ES database, Autoloop configurations and projections, and Ruflo stdio configuration.
 
-The personal dashboard opens without a login over HTTPS at 127.0.0.1:8787. The service binds to loopback. The certificate is dashboard-v1.crt.
+The dashboard opens without a login over HTTPS. cbnet serves 127.0.0.1:8787 and 192.168.5.4:8787. The LAN listener accepts clients from 192.168.5.0/24. The Windows Hyper-V rule PCP-Dashboard-V1-8787 permits TCP 8787 on the Private profile for that subnet. The certificate is dashboard-v1.crt.
 
 - Start on the active WSL distribution with systemctl --user start pcp-dashboard-v1.service.
 - Check the listener with systemctl --user status pcp-dashboard-v1.service and ss -ltn 'sport = :8787'.
 - Stop with systemctl --user stop pcp-dashboard-v1.service, or use disable --now to stop and remove automatic startup on WSL user-session initialization.
 
-The Windows-side local endpoint is https://127.0.0.1:8787/. A dedicated hidden Windows WSL process keeps the user session alive while this deployment is running. After a Windows restart, start an Ubuntu-24.04 WSL user session and keep it active for the user service.
+The Windows-side local endpoint is https://127.0.0.1:8787/. The LAN endpoint is https://192.168.5.4:8787/. A dedicated hidden Windows WSL process keeps the user session alive while this deployment is running. After a Windows restart, start an Ubuntu-24.04 WSL user session and keep it active for the user service.
 
 ## Focused checks
 
-Run python3 -B -m unittest discover -s dashboard -v from the repository root. The nine tests cover EO scope and drafts, ES correlation, Autoloop live/offline identity mapping, source credential transport, loopback binding, direct page access and the absence of HTTP write methods. The browser acceptance checks use the running HTTPS service and cover seven views, actual records, dialogs, filters, write-control explanations and responsive layout.
+Run python3 -B -m unittest discover -s dashboard -v from the repository root. The eleven tests cover EO scope and drafts, ES correlation, Autoloop live/offline identity mapping, source credential transport, listener and client network scope, direct page access and the absence of HTTP write methods. The browser acceptance checks use the running HTTPS service and cover seven views, actual records, dialogs, filters, write-control explanations and responsive layout.

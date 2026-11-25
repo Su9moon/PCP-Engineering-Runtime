@@ -1,4 +1,5 @@
 """Focused V1 source mapping and read-boundary regression checks."""
+import ipaddress
 import ssl
 import sqlite3
 import subprocess
@@ -105,6 +106,19 @@ class AccessTests(unittest.TestCase):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         with DashboardServer(0, None, context) as server:
             self.assertEqual(server.server_address[0], "127.0.0.1")
+
+    def test_listener_rejects_broad_or_mismatched_networks(self):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        for address, clients in (("0.0.0.0", "0.0.0.0/0"), ("127.0.0.1", "192.168.5.0/24")):
+            with self.subTest(address=address, clients=clients), self.assertRaises(ValueError):
+                DashboardServer(0, None, context, address=address, clients=clients)
+
+    def test_lan_listener_filters_client_subnet(self):
+        class Listener:
+            clients = ipaddress.IPv4Network("192.168.5.0/24")
+
+        self.assertTrue(DashboardServer.verify_request(Listener(), None, ("192.168.5.10", 1234)))
+        self.assertFalse(DashboardServer.verify_request(Listener(), None, ("192.168.6.10", 1234)))
 
     def test_dashboard_can_be_read_without_login(self):
         class Client:
