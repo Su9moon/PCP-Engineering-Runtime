@@ -7,6 +7,16 @@
 - Ruflo control-plane target: `cbnet` / Ubuntu 24.04 / WSL2
 - Execution location: flexible across authorized nodes; do not infer all workers must be on cbnet.
 
+## Dashboard V1.2 engineering planning
+
+- WO-20261126-002 continues the V1.1 deployment on `dashboard/wo-20261125-001`. The existing service is active at `https://127.0.0.1:8787/` and `https://192.168.5.4:8787/`. Loopback and LAN returned HTTPS 200 without a login. LAN model requests returned 403. An independent MEC-device check remains open.
+- The original Ruflo 3.80.0 Supervisor planned the work and scoped the model connection. The final deployed browser call used `gpt-6.2-sol`, returned route 200 in 19,657 ms, and stored revision 7 with six earlier revisions intact. Receipt `resp_0e723ef45085db6f016b077245bb5487d0a3dd342e6321c222`. The request used effort `high`. Runtime response effort remains unexposed.
+- The existing intake stores confirmed requirement snapshots and versioned proposals, with Suggestion, Manual and Autonomous planning choices, dependency edits, risk and separate authorization scope. A plan confirmation records a local decision. Live dispatch remains disabled.
+- Code `647a8bc6cb74339943cd74f95f73ad25a750c506` passed 25 focused Python tests and 22 browser assertions. Independent Ruflo Reviewer and Product QA accepted the sealed evidence within the planning scope. The Supervisor accepted P2 and kept P1 in REWORK for an independent diff and test reproduction and server-side operator authorization. The live planner is now paused. Loopback planning POST returns 503 and LAN planning POST returns 403. Both listeners still read the seven revisions and offer anonymous draft editing.
+- Live execution P3 remains blocked. The primary Hub on port 47355 is offline, WO-003 Run 28 remains claimed, and there is no authorized EO creation or corresponding ES Attempt path. This work reused the fixture-era run and review evidence, created no new Autoloop Event or Run, and preserved the original local main and existing pending changes.
+
+[Detailed V1.2 report](reports/PCP-ENGINEERING-CONTROL-CENTER-V1.2-20261126.md)
+
 ## Dashboard V1.1 conversational intake
 
 - WO-20261126-001 is deployed on the existing pcp-dashboard-v1.service over https://127.0.0.1:8787/ and https://192.168.5.4:8787/. Both endpoints returned HTTP 200 without a login from cbnet WSL. Edge on cbnet verified task-entry navigation. An independent MEC-device test remains open.
