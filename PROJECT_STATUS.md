@@ -7,6 +7,16 @@
 - Ruflo control-plane target: `cbnet` / Ubuntu 24.04 / WSL2
 - Execution location: flexible across authorized nodes; do not infer all workers must be on cbnet.
 
+## Dashboard V1.2 D01 execution continuation
+
+- WO-20261126-002 resumes from `aa10e159383cd2f5a9fbdb82e5a0ac25d0ca2105`. The existing 8787 service now has the reviewed code at `c51a98de770114d6f8db8eecb803736a9a24e2c5`. Localhost and private LAN access remain anonymous. The LAN address is now `192.168.5.6`, with the same private subnet and existing 8787 firewall scope. A separate MEC device has not been tested.
+- A server-owned grant enables real local TLS same-origin dialogue and Ruflo planning. The browser recorded two actual `gpt-6.2-sol` route 200 responses and stored confirmed Chinese requirements R1 and Manual plan P2. Complexity remains advisory. The grant is based on the service account and does not identify individual same-host users.
+- The one authorized non-production action created `JOB-20261127-001` and `WO-20261127-001` in the existing EO Git repository at `6785b6d08d1a0a0a05fb11291158e0a90f59e4d0`. The existing ES kernel created one Request, Execution, Attempt and Invocation. The recovered `ruflo-local` Worker completed Autoloop Event 30 / Run 29 once, with exit code 0 and zero retries. The historical Run 28 is unknown with zero retries and unchanged original evidence.
+- Dashboard read back and exported “D01 合成验证通过。” Worker context recorded `gpt-6.2-sol` and `high`. Distinct Ruflo Reviewer and Product QA signed PASS, the original Supervisor accepted D01, and ES recorded APPROVED with canonical state DONE.
+- Independent checks passed 5 focused Python tests for P1, 3 grant checks and the five-case EO/ES fixture for P3, Node syntax checks, two real model calls and one end-to-end Worker run. The earlier 25 Python / 22 browser results were reused. The D01 test rule is paused after its only run.
+
+[D01 continuation and execution evidence](reports/PCP-ENGINEERING-CONTROL-CENTER-V1.2-D01-20261127.md)
+
 ## Dashboard V1.2 engineering planning
 
 - WO-20261126-002 continues the V1.1 deployment on `dashboard/wo-20261125-001`. The existing service is active at `https://127.0.0.1:8787/` and `https://192.168.5.4:8787/`. Loopback and LAN returned HTTPS 200 without a login. LAN model requests returned 403. An independent MEC-device check remains open.
