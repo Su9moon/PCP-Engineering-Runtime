@@ -142,9 +142,9 @@ function intakePlanning(draft, status, caps, change) {
   if (ready) note = suggest ? "Ruflo 读取当前已确认档案和来源，返回可编辑建议。" :
     (caps.plannerAvailable ? "人工计划保持有效。显式保存为建议模式后可请求新建议。" : "Ruflo 规划仅在本机地址、已配置适配器时可用。");
   return panel("工程计划与编排", note, controls, selected,
-    node("p", "note warn", caps.executionGap),
+    draft.formal ? null : node("p", "note", caps.formalActions?.length ? "已启用本机授权的非生产任务入口。" : caps.executionGap),
     node("details", "intake-source", node("summary", "", "执行来源与交付证据"),
-      node("p", "", "当前计划尚无正式任务、Run、Worker 或 Review / QA 结果关联。"),
+      node("p", "", draft.formal ? "正式记录见本页的工单与执行区。" : "当前计划尚无正式任务、Run、Worker 或 Review / QA 结果关联。"),
       ...((state?.hubs ?? []).map((hub) => integration(hub.health)))),
-    node("div", "actions", optionalAction("正式派发"), link("查看实际运行记录", "#runs", "btn"), link("查看交付证据", "#reviews", "btn")));
+    node("div", "actions", draft.formal || caps.formalActions?.length ? null : optionalAction("正式派发"), link("查看实际运行记录", "#runs", "btn"), link("查看交付证据", "#reviews", "btn")));
 }

@@ -10,7 +10,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from intake import Intake, IntakeError
-from sources import Sources
+from operator_grant import FORMAL_ACTIONS, MODEL_ACTIONS, load_service_settings
+from sources import Sources, PROJECT
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {
@@ -136,10 +137,20 @@ class Handler(BaseHTTPRequestHandler):
         if ident is not None:
             intake.path(ident)
         local_planner = address == "127.0.0.1" and ipaddress.IPv4Address(self.client_address[0]).is_loopback
-        if not write:
-            result = intake.read(ident)
-            result["capabilities"]["plannerAvailable"] &= local_planner
+        grant = getattr(self.server, "operator_grant", None)
+        actions = grant.get("actions") if isinstance(grant, dict) and grant.get("project") == PROJECT else None
+        local_actions = set(actions) if local_planner and isinstance(actions, list) and all(isinstance(a, str) for a in actions) else set()
+
+        def apply_capabilities(result):
+            caps = result["capabilities"]
+            caps["dialogueAvailable"] = caps["plannerAvailable"] and "ai_reply" in local_actions
+            caps["plannerAvailable"] &= "plan_generate" in local_actions
+            formal = intake.formal and ident == grant.get("formalDraft") if grant else False
+            caps["formalActions"] = sorted(FORMAL_ACTIONS & local_actions) if formal else []
             return result
+
+        if not write:
+            return apply_capabilities(intake.read(ident))
         if self.headers.get_content_type() != "application/json":
             raise IntakeError("请使用 JSON 提交草稿。", 415)
         try:
@@ -151,17 +162,21 @@ class Handler(BaseHTTPRequestHandler):
             raise IntakeError("草稿请求格式错误。") from exc
         if not isinstance(data, dict):
             raise IntakeError("草稿请求格式错误。")
-        if data.get("action") == "plan_generate" and not local_planner:
-            raise IntakeError("通过 cbnet 本机地址打开 Dashboard 后可请求 Ruflo 规划。", 403)
-        result = intake.update(ident, data)
-        result["capabilities"]["plannerAvailable"] &= local_planner
-        return result
+        action = data.get("action")
+        if not isinstance(action, str):
+            raise IntakeError("草稿操作名称无效。")
+        if action in FORMAL_ACTIONS | MODEL_ACTIONS:
+            if action not in local_actions or origin != f"https://{self.headers.get('Host')}":
+                raise IntakeError("此操作需要已配置的本机服务授权和同源请求。", 403)
+            if action in FORMAL_ACTIONS and (not ident or ident != grant.get("formalDraft")):
+                raise IntakeError("此草稿不在服务端正式执行授权范围内。", 403)
+        return apply_capabilities(intake.update(ident, data))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    config = json.loads(parser.parse_args().config.read_text(encoding="utf-8"))
+    config, grant = load_service_settings(parser.parse_args().config)
     tls = config["tls"]
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -170,12 +185,13 @@ def main():
     intake = None
     if settings := config.get("intake"):
         try:
-            intake = Intake(settings, ROOT.parent, config["sources"].get("eo"))
+            intake = Intake(settings, ROOT.parent, config["sources"].get("eo"), grant, config["sources"].get("es"))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"Dashboard Intake unavailable: {type(exc).__name__}", flush=True)
     with ExitStack() as stack:
         local = stack.enter_context(DashboardServer(config["port"], sources, context))
         local.intake = intake
+        local.operator_grant = grant
         if lan := config.get("lan"):
             try:
                 private = stack.enter_context(DashboardServer(

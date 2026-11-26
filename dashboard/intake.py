@@ -10,7 +10,9 @@ from subprocess import TimeoutExpired
 
 import yaml
 
+from formal import Formal, FormalError
 from intake_context import ProjectContext
+from operator_grant import FORMAL_ACTIONS
 from planning import LocalPlanner, PlanError, draft_basis as basis, new_revision, normalize_plan
 from sources import PROJECT, now
 
@@ -83,7 +85,10 @@ def build_documents(draft, templates):
     for gap in draft["context"]["unavailable"]:
         brief.append(f"- 来源不可用：{gap}")
     brief.extend(("", "## 对话记录", ""))
-    brief.extend(f"- {entry['at']} 用户：{entry['text']}" for entry in draft["messages"])
+    brief.extend(
+        f"- {entry['at']} {'Ruflo' if entry['role'] == 'assistant' else '用户'}：{entry['text']}"
+        for entry in draft["messages"]
+    )
     docs = [{"filename": "requirements.md", "title": "需求与验收说明", "text": "\n".join(brief) + "\n"}]
     if not templates:
         return docs
@@ -131,7 +136,7 @@ def review_state(draft):
 
 
 class Intake:
-    def __init__(self, settings, project_repo, eo_repo):
+    def __init__(self, settings, project_repo, eo_repo, grant=None, es_database=None):
         self.directory = Path(settings["directory"])
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if self.directory.is_symlink() or self.directory.stat().st_mode & 0o077:
@@ -139,6 +144,12 @@ class Intake:
         self.context = ProjectContext(project_repo, settings["pcp_repo"])
         self.templates, self.eo_gap = eo_templates(eo_repo)
         self.planner = LocalPlanner(settings.get("planner"))
+        self.formal = None
+        if grant and es_database and grant.get("formal") and grant["formal"].get("eoRepo") == eo_repo:
+            try:
+                self.formal = Formal(grant["formal"], es_database, build_documents)
+            except (KeyError, FormalError):
+                pass
         self.lock = threading.Lock()
 
     def config_view(self):
@@ -216,6 +227,8 @@ class Intake:
     def update(self, ident, body):
         if ident is not None and body.get("action") == "plan_generate":
             return self.generate_plan(ident, body)
+        if ident is not None and body.get("action") == "ai_reply":
+            return self.ai_reply(ident, body)
         with self.lock:
             if ident is None:
                 if body.get("action") != "message":
@@ -267,6 +280,28 @@ class Intake:
             self.save(current)
         return {"draft": current, "status": review_state(current), "capabilities": self.config_view()}
 
+    def ai_reply(self, ident, body):
+        with self.lock:
+            draft = self.load(ident)
+            self.check_version(draft, body)
+            if draft["project"] != PROJECT or draft["messages"][-1]["role"] != "user":
+                raise IntakeError("请关联现有项目并先保存一条用户消息。", 409)
+        try:
+            raw, evidence = self.planner.converse(draft)
+            message = text_input(raw)
+            if not message:
+                raise PlanError("Ruflo 没有返回可保存的对话。")
+        except PlanError as exc:
+            raise IntakeError(str(exc), 503) from exc
+        with self.lock:
+            current = self.load(ident)
+            self.check_version(current, body)
+            current["messages"].append({"role": "assistant", "text": message, "ruflo": evidence, "at": now()})
+            current["version"] += 1
+            current["updatedAt"] = now()
+            self.save(current)
+        return {"draft": current, "status": review_state(current), "capabilities": self.config_view()}
+
     def apply(self, draft, body):
         action = body.get("action")
         if action == "message":
@@ -305,7 +340,14 @@ class Intake:
                 raise IntakeError("需求或来源已发生变化。请重新生成并预览当前版本。", 409)
             if not packages[-1]["confirmedAt"]:
                 packages[-1]["confirmedAt"] = now()
+        elif action in FORMAL_ACTIONS:
+            try:
+                self.apply_formal(draft, action)
+            except FormalError as exc:
+                raise IntakeError(str(exc), 409) from exc
         elif action in ("plan_save", "plan_confirm"):
+            if draft["project"] not in (None, PROJECT):
+                raise IntakeError("工程计划须关联本服务配置的 Runtime 仓库。", 403)
             package = self.confirmed_package(draft)
             plans = draft.setdefault("plans", [])
             if action == "plan_save":
@@ -328,6 +370,33 @@ class Intake:
                 plans[-1]["confirmedAt"] = plans[-1]["confirmedAt"] or now()
         else:
             raise IntakeError("此草稿操作不可用。")
+
+    def apply_formal(self, draft, action):
+        if self.formal is None:
+            raise IntakeError("当前部署未启用 EO / ES 执行连接。", 503)
+        if draft["project"] != PROJECT:
+            raise IntakeError("项目不在正式执行授权范围内。", 403)
+        if action == "formal_observe" and (binding := draft.get("formal")):
+            binding["observed"] = self.formal.observe(binding)
+            return
+        package = self.confirmed_package(draft)
+        latest = (draft.get("plans") or [None])[-1]
+        if not latest or not latest["confirmedAt"] or latest["basis"] != package["basis"] or latest["documentRevision"] != package["revision"]:
+            raise IntakeError("请确认当前需求文档与对应工程计划。", 409)
+        if dossier_value(draft, "goal") != self.formal.settings["objective"]:
+            raise IntakeError("该目标不在非生产测试任务的服务端授权范围内。", 403)
+        ref = {"documentRevision": package["revision"], "planRevision": latest["revision"]}
+        binding = draft.get("formal")
+        if binding and any(binding.get(k) != v for k, v in ref.items()):
+            raise IntakeError("已有正式工单。当前版本的修改尚未获得新的执行授权。", 409)
+        if action == "formal_create" and not binding:
+            eo = self.formal.record(draft, package, latest)
+            admission = self.formal.request(eo)
+            draft["formal"] = {**ref, **eo, "request": admission["request_id"], "execution": admission["execution_id"]}
+        elif action == "formal_dispatch" and binding:
+            binding["dispatch"] = self.formal.dispatch(binding)
+        elif not binding:
+            raise IntakeError("请先创建正式 EO 工单。", 409)
 
     def retrieve(self, draft, terms):
         try:

@@ -51,3 +51,11 @@ The enabled private intake.planner configuration refers to the existing local Ru
 The private planner contract pins the existing Node executable and Ruflo launcher, tool and core. The adapter passes read-back-verified sealed copies of those three modules into the Node process and checks the compiled-source receipt before calling the Supervisor. A failed contract or missing same-request model receipt blocks plan generation. The service can still read saved plans and accept local draft edits.
 
 The V1.2 handoff pauses normal model requests by omitting `intake.planner` from the private service configuration. Local model requests return 503 and LAN model requests return 403. The saved drafts and history remain available. The release decision requires independent execution of the review checks and evidence of operator authorization for model generation.
+
+## V1.2 D01 execution continuation
+
+The existing private `dashboard.json` can grant model actions to the local service operator. The service checks the ownership and permissions of the file it opened. A state-changing privileged request requires the real loopback listener, a loopback peer and an exact HTTPS Origin. The configured LAN continues to support anonymous browsing and draft editing.
+
+A formal grant binds the non-production operation to one intake draft. EO writes use the configured branch, immutable template and schema commit, and Git object storage. ES uses the existing ExecutionKernel checkout and SQLite store. The request pins the committed Workorder and the Hub event is keyed by the kernel-issued Invocation. The plan and execution panels show distinct records for formal authorization, the provider receipt and the ES result.
+
+The recovered Autoloop Hub uses its existing database and loopback port. The Worker retains its registered identity and uses a separate recovery directory to avoid automatically resuming the archived Run 28.

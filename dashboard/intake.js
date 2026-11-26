@@ -45,7 +45,7 @@ function loadIntake() {
 function showIntake(index, session) {
   const container = el("view");
   const draft = session?.draft;
-  const caps = index.capabilities;
+  const caps = session?.capabilities ?? index.capabilities;
   const notice = node("p", "sub intake-notice");
   notice.setAttribute("role", "status");
   container.dataset.intakeRoute = intakeRoute()[0];
@@ -84,11 +84,12 @@ function showIntake(index, session) {
   history.open = !draft;
   const headline = header("工程需求对话", draft ? draft.title : "先用一句话描述目标、问题或想法。",
     link("新建对话", "#intake", "btn"), link("返回工程任务", "#tasks", "btn"));
-  const warnings = node("div", "note intake-capability", node("p", "", caps.llmGap),
+  const warnings = node("div", "note intake-capability", node("p", "", caps.dialogueAvailable ? "本机授权已启用 Ruflo 需求对话。" : caps.llmGap),
     node("p", "", "草稿通过本机 Dashboard 持久保存。请勿填写密钥、令牌或密码。"));
   const transcript = draft ? draft.messages.map((entry, position) => node("article", "intake-message",
-    node("div", "intake-message-meta", node("b", "", "你"), node("span", "sub", date(entry.at))),
+    node("div", "intake-message-meta", node("b", "", entry.role === "assistant" ? "Ruflo" : "你"), node("span", "sub", date(entry.at))),
     node("p", "", entry.text),
+    entry.ruflo ? node("p", "sub mono", entry.ruflo.model + " · " + entry.ruflo.messageId) : null,
     position === 0 ? button("用作项目目标", () => change({action: "field", field: "goal", value: entry.text, provenance: "USER_CONFIRMED"}), "btn small") : null,
   )) : [];
   const input = labelFor(node("textarea", "intake-input"), "对话消息");
@@ -105,13 +106,16 @@ function showIntake(index, session) {
     event.preventDefault();
     if (input.value.trim()) await change({action: "message", text: input.value});
   });
-  const conversation = panel("对话记录", draft ? "自动保存的手动对话 · " + date(draft.updatedAt) : "自由描述，无需先填写工程表单。",
-    node("div", "intake-transcript", transcript.length ? transcript : node("p", "muted", "第一条消息会建立可续接的草稿。")), form);
+  const conversation = panel("对话记录", draft ? "已保存的对话 · " + date(draft.updatedAt) : "自由描述，无需先填写工程表单。",
+    node("div", "intake-transcript", transcript.length ? transcript : node("p", "muted", "第一条消息会建立可续接的草稿。")), form,
+    caps.dialogueAvailable && draft?.project && draft.messages.at(-1)?.role === "user"
+      ? button("请 Ruflo 回复", () => change({action: "ai_reply"}), "btn primary") : null);
   const workspace = node("div", "intake-workspace",
     headline, warnings, notice, history,
     node("div", "intake-grid", conversation, draft ? intakeDossier(draft, caps, change) : null),
     draft ? intakeDocuments(draft, session.status, caps, change) : null,
-    draft ? intakePlanning(draft, session.status, caps, change) : null);
+    draft ? intakePlanning(draft, session.status, caps, change) : null,
+    draft && (draft.formal || caps.formalActions?.length) ? intakeExecution(draft, caps, change) : null);
   container.replaceChildren(workspace);
 }
 
@@ -229,6 +233,32 @@ function intakeDocuments(draft, status, caps, change) {
       latest ? versions : null),
     status === "changed" ? node("p", "note warn", "需求或来源已更新。生成新版本后可进行下一次确认。") : null,
     node("p", "note", caps.eoGap), preview);
+}
+
+function intakeExecution(draft, caps, change) {
+  const record = draft.formal;
+  const run = record?.dispatch;
+  const last = record?.observed;
+  const actions = new Set(caps.formalActions);
+  return panel("正式工单与执行", last?.state ?? (run ? "已派发，等待 Worker 回执" : record ? "待授权派发" : "待登记"),
+    node("div", "actions",
+      actions.has("formal_create") && !record
+        ? button("创建 EO Job 和 Workorder", () => change({action: "formal_create"}), "btn primary") : null,
+      actions.has("formal_dispatch") && record && !run
+        ? button("授权并派发非生产任务", () => change({action: "formal_dispatch"}), "btn primary") : null,
+      actions.has("formal_observe") && record
+        ? button("读取执行结果", () => change({action: "formal_observe"})) : null),
+    record ? entries([["EO Job", record.job], ["EO Workorder", record.workorder], ["EO 提交", record.commit],
+      ["ES Request", record.request], ["ES Execution", record.execution], ["ES Attempt", last?.attempt],
+      ["调用", run?.invocation], ["Autoloop Event", run?.event], ["Autoloop Run", run?.run],
+      ["Worker 运行状态", last?.provider?.state], ["Codex Thread", last?.provider?.session]]) : null,
+    last?.result?.response ? node("p", "note", last.result.response) : null,
+    last?.result ? button("导出执行报告", () => exportDocument(record.workorder + "-执行报告.md", [
+      "# 工程执行报告", "", "目标：" + draft.title, "交付结果：" + last.result.response,
+      "EO 工单：" + record.workorder, "EO 执行依据：" + record.commit, "ES 执行：" + record.execution,
+      "ES Attempt：" + last.attempt, "ES 状态：" + last.state,
+      "Autoloop Event / Run：" + run.event + " / " + run.run, "Codex 会话：" + last.provider.session,
+    ].join(String.fromCharCode(10)))) : null);
 }
 
 if (intakeRoute()) loadIntake();
