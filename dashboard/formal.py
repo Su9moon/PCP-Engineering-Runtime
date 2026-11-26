@@ -233,14 +233,24 @@ class Formal:
         invocation = attempt["invocation_id"]
         if run := self.provider_run(invocation):
             return {"event":run["event_id"], "run":run["run_id"], "invocation":invocation}
-        current = es.get_execution(execution["execution_id"])
-        effective = current["attempts"][-1]
-        if (current["state"] != "QUEUED" or effective["attempt_id"] != attempt["attempt_id"]
-                or effective["state"] != "CLAIMED" or effective["authority"]["status"] != "CURRENT"):
-            raise FormalError("ES Attempt 不可派发。")
+        # Keep the native SQLite write reservation through the bounded, local provider handoff.
+        # No SQL mutations are made by the adapter. Competing kernel writers must wait.
+        with es.store.transaction():
+            current = es.get_execution(execution["execution_id"])
+            effective = current["attempts"][-1]
+            if (current["state"] != "QUEUED" or effective["attempt_id"] != attempt["attempt_id"]
+                    or effective["state"] != "CLAIMED" or effective["authority"]["status"] != "CURRENT"):
+                raise FormalError("ES Attempt 不可派发。")
+            if current["request"]["metadata"]["plan_sha256"] != self.settings["planSha256"]:
+                raise FormalError("ES Attempt 与当前授予的计划版本不符。")
+            self.workorder(binding)
+            self.verify_routing()
+            return self.emit(invocation, current["execution_id"])
+
+    def emit(self, invocation, execution_id):
         cfg = json.loads(Path(self.settings["hubConfig"]).read_text())
         event = {"id":invocation, "type":self.settings["eventType"], "subject":invocation,
-                 "summary":execution["execution_id"]}
+                 "summary":execution_id}
         if cfg["source"]["name"] != self.settings["source"] or cfg["url"] != "http://127.0.0.1:47355":
             raise FormalError("现有 Autoloop 来源或回环地址不匹配。")
         request = Request(cfg["url"] + "/v1/events", json.dumps(event).encode(),
@@ -253,6 +263,31 @@ class Formal:
         if receipt.get("routed") != [self.settings["rule"]] or not (run := self.provider_run(invocation)):
             raise FormalError("Autoloop 未返回唯一、可对账的 Worker Run。")
         return {"event":run["event_id"], "run":run["run_id"], "invocation":invocation}
+
+    def worker_proof(self, run, summary):
+        root = Path(self.settings["workerHome"]) / "worker" / "runs" / f"{int(run['run_id'])}-1"
+        command = (root / "command-1.sh").read_text(encoding="utf-8")
+        if self.settings["objective"] not in command or self.settings["program"] not in command:
+            raise FormalError("Worker 启动凭据未证明执行了已授权的任务。")
+        with (root / "stdout-1.log").open("rb") as file:
+            output = file.read(2_000_001)
+        if len(output) > 2_000_000 or (root / "exit-1").read_text().strip() != "0":
+            raise FormalError("Worker 日志超出验收范围或退出状态不为零。")
+        events = []
+        for line in output.decode().splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict):
+                events.append(item)
+        thread_ids = {e.get("thread_id") for e in events if e.get("type") == "thread.started"}
+        deliveries = [e["item"].get("text") for e in events if e.get("type") == "item.completed"
+                      and e.get("item", {}).get("type") == "agent_message"]
+        if (thread_ids != {run["session"]} or not deliveries or deliveries[-1] != summary
+                or not any(e.get("type") == "turn.completed" for e in events)):
+            raise FormalError("Worker 模型回执与已有 Run 或交付内容不一致。")
+        return sha256(output).hexdigest()
 
     def observe(self, binding):
         es = self.kernel()
@@ -272,10 +307,13 @@ class Formal:
             summary = (run["summary"] or "").strip()
             if summary != self.settings["expectedResult"]:
                 raise FormalError("Worker 终态缺少可交付的中文回执。")
+            proof = self.worker_proof(run, summary)
             normalized = {"outcome": {"kind":"RESULT_AVAILABLE"},
-                          "payload": {"response":summary,"provider_run":run["run_id"],"codex_thread":run["session"]}}
+                          "payload": {"response":summary,"provider_run":run["run_id"],"codex_thread":run["session"],
+                                      "plan_sha256":self.settings["planSha256"],"worker_output_sha256":proof}}
             es.record_attempt_result(attempt["authority_id"], inv + "-result", normalized,
-                                    [f"autoloop:run:{run['run_id']}",f"codex:thread:{run['session']}"])
+                                    [f"autoloop:run:{run['run_id']}/stdout-1.log#sha256={proof}",
+                                     f"codex:thread:{run['session']}"])
             info = es.get_execution(info["execution_id"])
         result = info["attempts"][-1]["result"]
         return {"state":info["state"],"provider":provider,"attempt":attempt["attempt_id"],"invocation":inv,
