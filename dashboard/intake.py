@@ -345,6 +345,8 @@ class Intake:
                 self.apply_formal(draft, action)
             except FormalError as exc:
                 raise IntakeError(str(exc), 409) from exc
+            except RuntimeError as exc:
+                raise IntakeError("ES 拒绝该状态变更，请从权威记录对账后再继续。", 409) from exc
         elif action in ("plan_save", "plan_confirm"):
             if draft["project"] not in (None, PROJECT):
                 raise IntakeError("工程计划须关联本服务配置的 Runtime 仓库。", 403)
@@ -377,7 +379,11 @@ class Intake:
         if draft["project"] != PROJECT:
             raise IntakeError("项目不在正式执行授权范围内。", 403)
         if action == "formal_observe" and (binding := draft.get("formal")):
-            binding["observed"] = self.formal.observe(binding)
+            observation = self.formal.observe(binding)
+            binding["observed"] = observation
+            if provider := observation.get("provider"):
+                binding["dispatch"] = {"event": provider["event"], "run": provider["run"],
+                                       "invocation": observation["invocation"]}
             return
         package = self.confirmed_package(draft)
         latest = (draft.get("plans") or [None])[-1]

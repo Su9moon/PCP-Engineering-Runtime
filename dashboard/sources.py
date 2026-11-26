@@ -84,14 +84,31 @@ def records(root, directory, kind):
         yield row
 
 
-def eo_records(path):
+def eo_records(path, formal_ref=None):
     root = Path(path).resolve()
-    revision = git(root, "rev-parse", "HEAD").stdout.strip()
+    revision = git(root, "rev-parse", formal_ref or "HEAD").stdout.strip()
     if not SHA.fullmatch(revision):
         raise ValueError("EO checkout unavailable")
-    jobs = {row["job_id"]: row for row in records(root, "jobs", "job")}
+
+    def current(directory, kind):
+        rows = {row[f"{kind}_id"]: row for row in records(root, directory, kind)}
+        if formal_ref:
+            tree = git(root, "ls-tree", "-r", "--name-only", revision, "--", directory)
+            for path in tree.stdout.splitlines():
+                parts = path.split("/")
+                if len(parts) != 3 or parts[2] != f"{kind}.yaml":
+                    continue
+                result = git(root, "show", f"{revision}:{path}")
+                if result.returncode or len(result.stdout) > 1_000_000:
+                    continue
+                row = yaml.safe_load(result.stdout)
+                if isinstance(row, dict) and row.get(f"{kind}_id") == parts[1]:
+                    rows[parts[1]] = {**row, "path":path, "gitClean":True}
+        return rows.values()
+
+    jobs = {row["job_id"]: row for row in current("jobs", "job")}
     tasks = []
-    for row in records(root, "workorders", "workorder"):
+    for row in current("workorders", "workorder"):
         if not any(f"{PROJECT}:" in ref for ref in row.get("input_refs", []) if isinstance(ref, str)):
             continue
         task = fields(row, "workorder_id", "job_id", "objective", "status", "created_at", "updated_at",
@@ -403,7 +420,7 @@ class Sources:
     def snapshot(self):
         ruflo = self.ruflo.refresh()
         try:
-            eo = eo_records(self.config["eo"])
+            eo = eo_records(self.config["eo"], self.config.get("eo_ref"))
         except (OSError, KeyError, ValueError, yaml.YAMLError, subprocess.TimeoutExpired, TypeError):
             eo = {"health": observed("EO 工程记录", "unavailable", "EO Git 工作区或 YAML 记录无法读取。"), "tasks": [], "results": []}
         try:

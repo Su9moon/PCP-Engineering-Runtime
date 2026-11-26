@@ -13,7 +13,7 @@ from urllib.request import build_opener, ProxyHandler, Request
 
 import yaml
 
-from sources import now
+from sources import PROJECT, now
 
 
 class FormalError(ValueError):
@@ -28,6 +28,10 @@ def git(repo, *args, data=None, index=None):
     if p.returncode:
         raise FormalError(f"EO Git 操作未完成（{args[0]}）。请核对权威引用后再试。")
     return p.stdout.decode()
+
+
+def plan_digest(plan):
+    return sha256(json.dumps(plan["plan"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def read_object(repo, commit, path):
@@ -67,16 +71,25 @@ class Formal:
         return git(self.repo, "rev-parse", "--verify", self.ref).strip()
 
     def record(self, draft, package, plan):
-        marker = f"Intake-Ref: {draft['id']}/R{package['revision']}/P{plan['revision']}"
+        marker = f"Intake-Ref: {draft['id']}"
+        detail = f"Intake-Version: R{package['revision']}/P{plan['revision']} {package['basis']}"
         head = self.eo_head()
+        if f"branch {self.ref}" in git(self.repo, "worktree", "list", "--porcelain").splitlines():
+            raise FormalError("EO 正式引用已在其他工作区检出，请保留该工作区并使用专用现有引用。")
         if git(self.repo, "merge-base", head, self.pin).strip() != self.pin:
             raise FormalError("EO 权威引用与已配置 Schema/Template 基线不一致。")
         existing = git(self.repo, "log", "-1", "--format=%H", "--fixed-strings", "--grep=" + marker, head).strip()
-        digest = sha256(json.dumps(plan["plan"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        digest = plan_digest(plan)
+        if digest != self.settings["planSha256"] or package["basis"] != self.settings["documentBasis"]:
+            raise FormalError("需求或计划版本尚未绑定到服务端授权。")
+        tasks = plan["plan"]["tasks"]
+        if (len(tasks) != 1 or tasks[0]["input"] != self.settings["objective"]
+                or tasks[0]["output"] != self.settings["expectedResult"]):
+            raise FormalError("当前非生产授权仅覆盖计划中与服务端任务完全一致的单项验证。")
         if existing:
             commit_text = git(self.repo, "show", "-s", "--format=%B", existing)
             matches = re.search(r"^EO-Refs: (JOB-\d{8}-\d+) (WO-\d{8}-\d+)$", commit_text, re.M)
-            if not matches or f"Plan-SHA256: {digest}" not in commit_text:
+            if not matches or not {detail, f"Plan-SHA256: {digest}"}.issubset(commit_text.splitlines()):
                 raise FormalError("EO 既有记录与当前确认的计划不匹配。")
             return {"job": matches[1], "workorder": matches[2], "commit": existing}
         day = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
@@ -102,7 +115,10 @@ class Formal:
                 value["workorder_refs"] = [records["workorder"]]
             else:
                 value["job_id"] = records["job"]
-                value["input_refs"] += [f"pcp-intake:{draft['id']}/R{package['revision']}/P{plan['revision']}"]
+                value["input_refs"] += [
+                    f"{PROJECT}:dashboard/intake/{draft['id']}/R{package['revision']}/P{plan['revision']}",
+                    f"sha256:{digest}",
+                ]
             validate_record(value, read_object(self.repo, self.pin, f"schemas/{kind}.schema.yaml"))
             files[f"{kind}s/{records[kind]}/{name}"] = yaml.safe_dump(value, allow_unicode=True, sort_keys=False).encode()
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,7 +128,7 @@ class Formal:
                 oid = git(self.repo, "hash-object", "-w", "--stdin", data=body).strip()
                 git(self.repo, "update-index", "--add", "--cacheinfo", f"100644,{oid},{path}", index=index)
             tree = git(self.repo, "write-tree", index=index).strip()
-        change = (f"登记 V1.2 非生产工程工单\n\n{marker}\nPlan-SHA256: {digest}\n"
+        change = (f"登记 V1.2 非生产工程工单\n\n{marker}\n{detail}\nPlan-SHA256: {digest}\n"
                   f"EO-Refs: {records['job']} {records['workorder']}\n")
         commit = git(self.repo, "commit-tree", tree, "-p", head, data=change.encode()).strip()
         git(self.repo, "update-ref", self.ref, commit, head)
@@ -134,13 +150,22 @@ class Formal:
         finally:
             sys.path.pop(0)
 
+    def workorder(self, binding):
+        commit, wo = binding["commit"], binding["workorder"]
+        head = self.eo_head()
+        path = f"workorders/{wo}/workorder.yaml"
+        if (git(self.repo, "merge-base", head, commit).strip() != commit
+                or git(self.repo, "rev-parse", f"{head}:{path}") != git(self.repo, "rev-parse", f"{commit}:{path}")):
+            raise FormalError("当前 EO 权威工单与冻结的执行版本不一致。")
+        item = read_object(self.repo, commit, path)
+        if (item["workorder_id"] != wo or item["status"] != "READY"
+                or "sha256:" + self.settings["planSha256"] not in item["input_refs"]):
+            raise FormalError("EO 工单不可用于当前获授权的执行。")
+        return item
+
     def request(self, binding):
         commit, wo = binding["commit"], binding["workorder"]
-        if git(self.repo, "merge-base", self.eo_head(), commit).strip() != commit:
-            raise FormalError("EO 权威引用已不含当前工单提交。")
-        item = read_object(self.repo, commit, f"workorders/{wo}/workorder.yaml")
-        if item["workorder_id"] != wo or item["status"] != "READY":
-            raise FormalError("EO 工单不可用于执行。")
+        item = self.workorder(binding)
         req = {
             "contract_version": "pcp.execution/v0.1", "kind": "ExecutionRequest",
             "request_id": f"REQ-D01-{wo}", "source": {"type":"engineering_workorder","ref":wo,
@@ -152,6 +177,7 @@ class Formal:
             "constraints": {"scope":"synthetic-text-only","no_file_or_tool_use":True},
             "result_contract": {"required":["response","provider_run","codex_thread"]},
             "review":{"required":True},
+            "metadata":{"workorder_id":wo,"job_id":binding["job"],"plan_sha256":self.settings["planSha256"]},
         }
         return self.kernel().submit_execution(req)
 
@@ -162,16 +188,44 @@ class Formal:
         with sqlite3.connect(hub.as_uri() + "?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
             row = db.execute(
-                "SELECT events.id AS event_id, runs.id AS run_id, runs.state, runs.session, runs.summary, "
-                "runs.usage, runs.claimed_at FROM events JOIN run_events ON events.id=run_events.event_id "
-                "JOIN runs ON runs.id=run_events.run_id WHERE events.source=? AND events.key=? AND runs.rule=?",
-                (self.settings["source"], invocation, self.settings["rule"]),
+                "SELECT events.id AS event_id, runs.id AS run_id, runs.rule, runs.state, runs.session, runs.summary, "
+                "runs.usage, runs.claimed_at FROM events LEFT JOIN run_events ON events.id=run_events.event_id "
+                "LEFT JOIN runs ON runs.id=run_events.run_id WHERE events.source=? AND events.key=?",
+                (self.settings["source"], invocation),
             ).fetchall()
-        if len(row) > 1:
-            raise FormalError("该 Invocation 出现多个 Provider Run，需人工对账。")
+        if row and (len(row) != 1 or row[0]["rule"] != self.settings["rule"]):
+            raise FormalError("该 Invocation 的 Provider 路由缺失或存在多个 Run，保留原事件供对账。")
         return dict(row[0]) if row else None
 
+    def verify_routing(self):
+        hub = Path(self.settings["hubDatabase"])
+        with sqlite3.connect(hub.as_uri() + "?mode=ro", uri=True) as db:
+            (row,) = db.execute("SELECT data FROM projections WHERE collection='config' AND key='rules'").fetchone()
+        rules = json.loads(row)["value"]
+        event_type = self.settings["eventType"]
+
+        def takes(rule):
+            trigger = rule["when"]
+            return trigger.get("source") == self.settings["source"] and any(
+                pattern in ("*", event_type) or (pattern.endswith(".*") and event_type.startswith(pattern[:-1]))
+                for pattern in trigger.get("types", [])
+            )
+
+        matches = [rule for rule in rules["rules"] if takes(rule)]
+        if len(matches) != 1:
+            raise FormalError("Autoloop 当前加载规则无法保证唯一派发。")
+        rule = matches[0]
+        agent = rules["agents"][rule["to"]]
+        if (rule["name"] != self.settings["rule"] or rule["cwd"] != self.settings["cwd"]
+                or rule["prompt"] != self.settings["objective"] or agent["worker"] != self.settings["worker"]
+                or agent["model"] != "gpt-6.2-sol" or agent["effort"] != "high" or agent["access"] != "read"
+                or agent["program"] != self.settings["program"]
+                or sha256(Path(agent["program"]).read_bytes()).hexdigest() != self.settings["programSha256"]):
+            raise FormalError("Autoloop 当前加载规则与服务单授权范围不符。")
+
     def dispatch(self, binding):
+        self.workorder(binding)
+        self.verify_routing()
         es = self.kernel()
         execution = es.get_execution(binding["execution"])
         attempt = es.authorize_attempt(execution["execution_id"], self.settings["worker"],

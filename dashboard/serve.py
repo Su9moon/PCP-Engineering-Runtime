@@ -165,8 +165,11 @@ class Handler(BaseHTTPRequestHandler):
         action = data.get("action")
         if not isinstance(action, str):
             raise IntakeError("草稿操作名称无效。")
+        authorized_origin = origin == f"https://{self.headers.get('Host')}"
+        if ident and grant and ident == grant.get("formalDraft") and not (local_actions and authorized_origin):
+            raise IntakeError("该正式草稿仅接受已授权的本机确认与修改。", 403)
         if action in FORMAL_ACTIONS | MODEL_ACTIONS:
-            if action not in local_actions or origin != f"https://{self.headers.get('Host')}":
+            if action not in local_actions or not authorized_origin:
                 raise IntakeError("此操作需要已配置的本机服务授权和同源请求。", 403)
             if action in FORMAL_ACTIONS and (not ident or ident != grant.get("formalDraft")):
                 raise IntakeError("此草稿不在服务端正式执行授权范围内。", 403)
@@ -181,7 +184,10 @@ def main():
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls["cert"], tls["key"])
-    sources = Sources(config["sources"], ROOT.parent)
+    source_settings = dict(config["sources"])
+    if grant and isinstance(grant.get("formal"), dict) and grant["formal"].get("eoRepo") == source_settings.get("eo"):
+        source_settings["eo_ref"] = grant["formal"].get("eoRef")
+    sources = Sources(source_settings, ROOT.parent)
     intake = None
     if settings := config.get("intake"):
         try:

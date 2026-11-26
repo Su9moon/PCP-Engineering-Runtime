@@ -237,8 +237,8 @@ function intakeDocuments(draft, status, caps, change) {
 
 function intakeExecution(draft, caps, change) {
   const record = draft.formal;
-  const run = record?.dispatch;
   const last = record?.observed;
+  const run = record?.dispatch ?? (last?.provider ? {...last.provider, invocation: last.invocation} : null);
   const actions = new Set(caps.formalActions);
   return panel("正式工单与执行", last?.state ?? (run ? "已派发，等待 Worker 回执" : record ? "待授权派发" : "待登记"),
     node("div", "actions",

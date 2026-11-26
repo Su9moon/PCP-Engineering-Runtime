@@ -46,7 +46,10 @@ class OperatorGrantTests(TestCase):
     def test_lan_can_edit_and_cannot_call_model_or_dispatch(self):
         lan = {"bind": "192.168.5.4", "peer": "192.168.5.7", "origin": "https://192.168.5.4:8787",
                "grant": {"project": PROJECT, "actions": ["ai_reply", "formal_dispatch"], "formalDraft": "draft"}}
-        self.assertEqual(self.call("field", **lan)["received"][0], "draft")
+        self.assertEqual(self.call("field", draft="ordinary", **lan)["received"][0], "ordinary")
+        with self.assertRaises(IntakeError) as failure:
+            self.call("field", **lan)
+        self.assertEqual(failure.exception.status, 403)
         for action in ("ai_reply", "formal_dispatch"):
             with self.assertRaises(IntakeError) as failure:
                 self.call(action, **lan)
