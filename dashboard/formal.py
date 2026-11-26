@@ -281,6 +281,9 @@ class Formal:
                 continue
             if isinstance(item, dict):
                 events.append(item)
+        if any(e.get("type", "").startswith("item.") and e.get("item", {}).get("type") not in ("reasoning", "agent_message")
+               for e in events):
+            raise FormalError("非生产只读验证出现了任务范围外的工具调用。")
         thread_ids = {e.get("thread_id") for e in events if e.get("type") == "thread.started"}
         deliveries = [e["item"].get("text") for e in events if e.get("type") == "item.completed"
                       and e.get("item", {}).get("type") == "agent_message"]

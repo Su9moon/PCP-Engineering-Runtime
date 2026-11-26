@@ -208,6 +208,7 @@ def main():
             else:
                 print(f"Dashboard V1 HTTPS listening on {private.server_address[0]}:{private.server_address[1]}", flush=True)
                 private.intake = intake
+                private.operator_grant = grant
                 threading.Thread(target=private.serve_forever, daemon=True).start()
         print(f"Dashboard V1 HTTPS listening on {local.server_address[0]}:{local.server_address[1]}", flush=True)
         local.serve_forever()

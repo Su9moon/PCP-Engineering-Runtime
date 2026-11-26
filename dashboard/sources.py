@@ -91,19 +91,20 @@ def eo_records(path, formal_ref=None):
         raise ValueError("EO checkout unavailable")
 
     def current(directory, kind):
-        rows = {row[f"{kind}_id"]: row for row in records(root, directory, kind)}
-        if formal_ref:
-            tree = git(root, "ls-tree", "-r", "--name-only", revision, "--", directory)
-            for path in tree.stdout.splitlines():
-                parts = path.split("/")
-                if len(parts) != 3 or parts[2] != f"{kind}.yaml":
-                    continue
-                result = git(root, "show", f"{revision}:{path}")
-                if result.returncode or len(result.stdout) > 1_000_000:
-                    continue
-                row = yaml.safe_load(result.stdout)
-                if isinstance(row, dict) and row.get(f"{kind}_id") == parts[1]:
-                    rows[parts[1]] = {**row, "path":path, "gitClean":True}
+        rows = {}
+        if not formal_ref:
+            return records(root, directory, kind)
+        tree = git(root, "ls-tree", "-r", "--name-only", revision, "--", directory)
+        for path in tree.stdout.splitlines():
+            parts = path.split("/")
+            if len(parts) != 3 or parts[2] != f"{kind}.yaml":
+                continue
+            result = git(root, "show", f"{revision}:{path}")
+            if result.returncode or len(result.stdout) > 1_000_000:
+                continue
+            row = yaml.safe_load(result.stdout)
+            if isinstance(row, dict) and row.get(f"{kind}_id") == parts[1]:
+                rows[parts[1]] = {**row, "path":path, "gitClean":True}
         return rows.values()
 
     jobs = {row["job_id"]: row for row in current("jobs", "job")}
