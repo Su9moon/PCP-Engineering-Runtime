@@ -4,7 +4,7 @@ import os
 import stat
 
 MODEL_ACTIONS = frozenset({"ai_reply", "plan_generate"})
-FORMAL_ACTIONS = frozenset({"formal_create", "formal_dispatch", "formal_observe"})
+FORMAL_ACTIONS = frozenset({"formal_create", "formal_dispatch", "formal_observe", "formal_hold"})
 
 
 def load_service_settings(file):

@@ -233,7 +233,7 @@ class LocalPlanner:
         finally:
             self.lock.release()
 
-    def request(self, prompt, system):
+    def request(self, prompt, system, *, max_tokens=1650):
         cfg = self.settings
         try:
             artifacts = self.verified_artifacts()
@@ -249,7 +249,7 @@ class LocalPlanner:
                     compiled = modules.check_compiled()
                     before = len(routing.records)
                     result = ruflo.call(
-                        "agent_execute", agentId=cfg["supervisor"], prompt=prompt, maxTokens=1650,
+                        "agent_execute", agentId=cfg["supervisor"], prompt=prompt, maxTokens=max_tokens,
                         systemPrompt=system,
                     )
                     observations = routing.records[before:]

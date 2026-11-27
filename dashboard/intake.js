@@ -237,6 +237,8 @@ function intakeDocuments(draft, status, caps, change) {
 
 function intakeExecution(draft, caps, change) {
   const record = draft.formal;
+  if (record?.kind === "engineering" || caps.formalActions?.includes("formal_create") && !record)
+    return engineeringExecution(draft, caps, change);
   const last = record?.observed;
   const run = record?.dispatch ?? (last?.provider ? {...last.provider, invocation: last.invocation} : null);
   const actions = new Set(caps.formalActions);
@@ -259,6 +261,39 @@ function intakeExecution(draft, caps, change) {
       "ES Attempt：" + last.attempt, "ES 状态：" + last.state,
       "Autoloop Event / Run：" + run.event + " / " + run.run, "Codex 会话：" + last.provider.session,
     ].join(String.fromCharCode(10)))) : null);
+}
+
+function engineeringExecution(draft, caps, change) {
+  const receipt = draft.formal;
+  const allowed = new Set(caps.formalActions ?? []);
+  const readable = {QUEUED:"待 Worker 领取", RUNNING:"执行中", REVIEW_READY:"待独立验收", DONE:"已验收",
+    REVISION_REQUESTED:"整改待执行", RECOVERABLE:"待恢复", REJECTED:"已拒绝", NEEDS_INPUT:"待补充资料"};
+  const rows = receipt ? receipt.order.map((id) => {
+    const task = receipt.tasks.find(item => item.id === id);
+    const run = receipt.runs[id];
+    const detail = run ? node("div", "stack",
+      entries([["ES Execution", run.execution], ["ES Attempt", run.attempt], ["ES Invocation", run.invocation],
+        ["Autoloop Event", run.event], ["Autoloop Run", run.run], ["提供方状态", readable[run.provider] ?? run.provider],
+        ["Git 提交", run.result?.commit], ["EO 验收提交", run.eoDelivery]]),
+      run.result ? node("p", "note", run.result.response) : null,
+      ...Object.entries(run.decisions ?? {}).map(([name, answer]) =>
+        node("p", "sub", ({review:"独立复核", qa:"产品 QA", supervisor:"Supervisor"})[name] + " · " + answer.text))
+      ) : null;
+    return [task.title, task.depends.join(", ") || "无", readable[run?.state] ?? run?.state ?? "待前置任务", detail];
+  }) : [];
+  return panel("正式工程下达与交付", receipt?.state ?? "确认需求和工程计划后可登记",
+    receipt ? entries([["EO Job", receipt.job], ["EO Workorder", receipt.workorder], ["EO 工单提交", receipt.commit],
+      ["需求版本", "R" + receipt.documentRevision], ["计划版本", "P" + receipt.planRevision],
+      ["授权来源", receipt.authorizedBy ? "可信服务主体 · " + receipt.authorizedBy.peer : "待确认下达"]]) : null,
+    receipt?.obstacle ? node("p", "note warn", receipt.obstacle) : null,
+    node("div", "actions",
+      !receipt && allowed.has("formal_create") ? button("登记正式工程工单", () => change({action:"formal_create"}), "btn primary") : null,
+      receipt && !receipt.authorizedAt && allowed.has("formal_dispatch")
+        ? button("授权并下达非生产工程计划", () => change({action:"formal_dispatch"}), "btn primary") : null,
+      receipt?.authorizedAt && allowed.has("formal_hold")
+        ? button(receipt.held ? "恢复后续任务" : "暂停后续任务", () => change({action:"formal_hold", held:!receipt.held})) : null,
+      receipt ? button("读取当前执行状态", loadIntake) : null),
+    receipt ? table(["任务","依赖","状态","运行与交付证据"], rows, "等待已授权任务") : null);
 }
 
 if (intakeRoute()) loadIntake();

@@ -118,10 +118,14 @@ def eo_records(path, formal_ref=None):
         task["acceptance"] = [clean(line) for line in row.get("acceptance_criteria", [])]
         tasks.append(task)
     task_ids = {item["workorder_id"] for item in tasks}
-    evidence = {row["evidence_id"]: row for row in records(root, "evidence", "evidence")}
-    reviews = list(records(root, "reviews", "review"))
+    def evidence_rows(directory, kind):
+        historical = {row[f"{kind}_id"]: row for row in records(root, directory, kind)}
+        historical.update({row[f"{kind}_id"]: row for row in current(directory, kind)})
+        return historical.values()
+    evidence = {row["evidence_id"]: row for row in evidence_rows("evidence", "evidence")}
+    reviews = list(evidence_rows("reviews", "review"))
     results = []
-    for row in records(root, "results", "result"):
+    for row in evidence_rows("results", "result"):
         if row.get("workorder_id") not in task_ids:
             continue
         result = fields(row, "result_id", "workorder_id", "status", "summary", "conclusion", "updated_at",

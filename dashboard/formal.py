@@ -70,6 +70,15 @@ class Formal:
     def eo_head(self):
         return git(self.repo, "rev-parse", "--verify", self.ref).strip()
 
+    def validate_binding(self, package, plan):
+        digest = plan_digest(plan)
+        if digest != self.settings["planSha256"] or package["basis"] != self.settings["documentBasis"]:
+            raise FormalError("需求或计划版本尚未绑定到服务端授权。")
+        tasks = plan["plan"]["tasks"]
+        if (len(tasks) != 1 or tasks[0]["input"] != self.settings["objective"]
+                or tasks[0]["output"] != self.settings["expectedResult"]):
+            raise FormalError("当前非生产授权仅覆盖计划中与服务端任务完全一致的单项验证。")
+
     def record(self, draft, package, plan):
         marker = f"Intake-Ref: {draft['id']}"
         detail = f"Intake-Version: R{package['revision']}/P{plan['revision']} {package['basis']}"
@@ -80,12 +89,7 @@ class Formal:
             raise FormalError("EO 权威引用与已配置 Schema/Template 基线不一致。")
         existing = git(self.repo, "log", "-1", "--format=%H", "--fixed-strings", "--grep=" + marker, head).strip()
         digest = plan_digest(plan)
-        if digest != self.settings["planSha256"] or package["basis"] != self.settings["documentBasis"]:
-            raise FormalError("需求或计划版本尚未绑定到服务端授权。")
-        tasks = plan["plan"]["tasks"]
-        if (len(tasks) != 1 or tasks[0]["input"] != self.settings["objective"]
-                or tasks[0]["output"] != self.settings["expectedResult"]):
-            raise FormalError("当前非生产授权仅覆盖计划中与服务端任务完全一致的单项验证。")
+        self.validate_binding(package, plan)
         if existing:
             commit_text = git(self.repo, "show", "-s", "--format=%B", existing)
             matches = re.search(r"^EO-Refs: (JOB-\d{8}-\d+) (WO-\d{8}-\d+)$", commit_text, re.M)
@@ -121,6 +125,11 @@ class Formal:
                 ]
             validate_record(value, read_object(self.repo, self.pin, f"schemas/{kind}.schema.yaml"))
             files[f"{kind}s/{records[kind]}/{name}"] = yaml.safe_dump(value, allow_unicode=True, sort_keys=False).encode()
+        change = (f"登记非生产工程工单\n\n{marker}\n{detail}\nPlan-SHA256: {digest}\n"
+                  f"EO-Refs: {records['job']} {records['workorder']}\n")
+        return {**records, "commit": self.commit_records(head, files, change)}
+
+    def commit_records(self, head, files, message):
         with tempfile.TemporaryDirectory() as tmp:
             index = Path(tmp) / "eo-index"
             git(self.repo, "read-tree", head, index=index)
@@ -128,13 +137,11 @@ class Formal:
                 oid = git(self.repo, "hash-object", "-w", "--stdin", data=body).strip()
                 git(self.repo, "update-index", "--add", "--cacheinfo", f"100644,{oid},{path}", index=index)
             tree = git(self.repo, "write-tree", index=index).strip()
-        change = (f"登记 V1.2 非生产工程工单\n\n{marker}\n{detail}\nPlan-SHA256: {digest}\n"
-                  f"EO-Refs: {records['job']} {records['workorder']}\n")
-        commit = git(self.repo, "commit-tree", tree, "-p", head, data=change.encode()).strip()
+        commit = git(self.repo, "commit-tree", tree, "-p", head, data=message.encode()).strip()
         git(self.repo, "update-ref", self.ref, commit, head)
         if any(git(self.repo, "show", f"{commit}:{path}").encode() != body for path, body in files.items()):
             raise FormalError("EO 对象的权威读回与提交内容不一致。")
-        return {**records, "commit": commit}
+        return commit
 
     def kernel(self):
         source = Path(self.settings["esRepo"])
@@ -218,7 +225,7 @@ class Formal:
         agent = rules["agents"][rule["to"]]
         if (rule["name"] != self.settings["rule"] or rule["cwd"] != self.settings["cwd"]
                 or rule["prompt"] != self.settings["objective"] or agent["worker"] != self.settings["worker"]
-                or agent["model"] != "gpt-6.2-sol" or agent["effort"] != "high" or agent["access"] != "read"
+                or agent["model"] != "gpt-6.2-sol" or agent["effort"] != "high" or agent["access"] != self.settings.get("access", "read")
                 or agent["program"] != self.settings["program"]
                 or sha256(Path(agent["program"]).read_bytes()).hexdigest() != self.settings["programSha256"]):
             raise FormalError("Autoloop 当前加载规则与服务单授权范围不符。")

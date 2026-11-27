@@ -1,4 +1,5 @@
 """Exercise the grant boundary for local, forwarded and LAN requests."""
+import ipaddress
 import json
 from email.message import Message
 from io import BytesIO
@@ -26,12 +27,13 @@ class OperatorGrantTests(TestCase):
             path.chmod(0o640)
             self.assertIsNone(load_service_settings(path)[1])
 
-    def call(self, action, *, bind="127.0.0.1", peer="127.0.0.1", origin=None, host=None, grant=None, draft="draft"):
+    def call(self, action, *, bind="127.0.0.1", peer="127.0.0.1", origin=None, host=None, grant=None, draft="draft", lan_operator=False):
         def receive(ident, payload):
             return {"capabilities": {"plannerAvailable": True}, "received": (ident, payload)}
 
         store = SimpleNamespace(path=lambda ident: None, update=receive, formal=True)
-        server = SimpleNamespace(server_address=(bind, 8787), intake=store, operator_grant=grant)
+        server = SimpleNamespace(server_address=(bind, 8787), intake=store, operator_grant=grant,
+                                 lan_operator=lan_operator, clients=ipaddress.ip_network("192.168.5.0/24"))
         headers = Message()
         headers["Host"] = host or f"{bind}:8787"
         if origin is not None:
@@ -67,3 +69,18 @@ class OperatorGrantTests(TestCase):
         with self.assertRaises(IntakeError):
             self.call("formal_dispatch", origin=origin, grant=allowed, draft="other")
         self.assertEqual(self.call("formal_dispatch", origin=origin, grant=allowed)["received"][0], "draft")
+
+    def test_trusted_lan_can_use_only_granted_same_origin_engineering_actions(self):
+        lan = {"bind": "192.168.5.4", "peer": "192.168.5.7", "origin": "https://192.168.5.4:8787",
+               "lan_operator": True, "draft": "ordinary",
+               "grant": {"project": PROJECT, "actions": ["formal_dispatch"], "formalDraft": "draft",
+                         "engineering": {"configured": True}}}
+        result = self.call("formal_dispatch", **lan)
+        self.assertEqual(result["received"][1]["serviceAuthority"],
+                         {"principal": "service-owner", "listener": "192.168.5.4", "peer": "192.168.5.7"})
+        for action, overrides in (("formal_dispatch", {"peer": "192.168.50.7"}),
+                                  ("formal_dispatch", {"origin": None}),
+                                  ("formal_dispatch", {"draft": "draft"}), ("ai_reply", {})):
+            with self.subTest(action=action, overrides=overrides), self.assertRaises(IntakeError) as failure:
+                self.call(action, **(lan | overrides))
+            self.assertEqual(failure.exception.status, 403)

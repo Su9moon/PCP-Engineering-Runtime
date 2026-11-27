@@ -1,4 +1,6 @@
 """Project-local, resumable conversational intake drafts and EO exports."""
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import re
@@ -10,7 +12,8 @@ from subprocess import TimeoutExpired
 
 import yaml
 
-from formal import Formal, FormalError
+from formal import Formal, FormalError, plan_digest
+from engineering import Engineering
 from intake_context import ProjectContext
 from operator_grant import FORMAL_ACTIONS
 from planning import LocalPlanner, PlanError, draft_basis as basis, new_revision, normalize_plan
@@ -145,9 +148,11 @@ class Intake:
         self.templates, self.eo_gap = eo_templates(eo_repo)
         self.planner = LocalPlanner(settings.get("planner"))
         self.formal = None
-        if grant and es_database and grant.get("formal") and grant["formal"].get("eoRepo") == eo_repo:
+        formal_settings = (grant or {}).get("engineering") or (grant or {}).get("formal")
+        if es_database and isinstance(formal_settings, dict) and formal_settings.get("eoRepo") == eo_repo:
             try:
-                self.formal = Formal(grant["formal"], es_database, build_documents)
+                self.formal = (Engineering(formal_settings, es_database, build_documents, project_repo, self.planner)
+                               if grant.get("engineering") else Formal(formal_settings, es_database, build_documents))
             except (KeyError, FormalError):
                 pass
         self.lock = threading.Lock()
@@ -156,6 +161,14 @@ class Intake:
         return {"project": PROJECT, "fields": FIELDS, "provenance": PROVENANCE, "llmGap": LLM_GAP,
                 "eoGap": self.eo_gap, "plannerAvailable": self.planner.available(),
                 "executionGap": "该草稿未关联正式 EO Workorder 或有效 ES 授权。Autoloop 派发与运行控制尚未接通。"}
+
+    @contextmanager
+    def write_lock(self):
+        lock_path = self.directory / ".draft-write"
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with self.lock, os.fdopen(descriptor, "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
 
     def path(self, ident):
         if not ID.fullmatch(ident):
@@ -229,7 +242,7 @@ class Intake:
             return self.generate_plan(ident, body)
         if ident is not None and body.get("action") == "ai_reply":
             return self.ai_reply(ident, body)
-        with self.lock:
+        with self.write_lock():
             if ident is None:
                 if body.get("action") != "message":
                     raise IntakeError("请先创建对话草稿。")
@@ -270,7 +283,7 @@ class Intake:
             plan = normalize_plan(raw, text_input)
         except PlanError as exc:
             raise IntakeError(str(exc), 503) from exc
-        with self.lock:
+        with self.write_lock():
             current = self.load(ident)
             self.check_version(current, body)
             plans = current.setdefault("plans", [])
@@ -293,7 +306,7 @@ class Intake:
                 raise PlanError("Ruflo 没有返回可保存的对话。")
         except PlanError as exc:
             raise IntakeError(str(exc), 503) from exc
-        with self.lock:
+        with self.write_lock():
             current = self.load(ident)
             self.check_version(current, body)
             current["messages"].append({"role": "assistant", "text": message, "ruflo": evidence, "at": now()})
@@ -342,7 +355,7 @@ class Intake:
                 packages[-1]["confirmedAt"] = now()
         elif action in FORMAL_ACTIONS:
             try:
-                self.apply_formal(draft, action)
+                self.apply_formal(draft, action, body)
             except FormalError as exc:
                 raise IntakeError(str(exc), 409) from exc
             except RuntimeError as exc:
@@ -373,7 +386,10 @@ class Intake:
         else:
             raise IntakeError("此草稿操作不可用。")
 
-    def apply_formal(self, draft, action):
+    def apply_formal(self, draft, action, body):
+        if isinstance(self.formal, Engineering):
+            self.apply_engineering(draft, action, body)
+            return
         if self.formal is None:
             raise IntakeError("当前部署未启用 EO / ES 执行连接。", 503)
         if draft["project"] != PROJECT:
@@ -403,6 +419,40 @@ class Intake:
             binding["dispatch"] = self.formal.dispatch(binding)
         elif not binding:
             raise IntakeError("请先创建正式 EO 工单。", 409)
+
+    def apply_engineering(self, draft, action, body):
+        if draft["project"] != PROJECT:
+            raise IntakeError("项目不在服务端登记的非生产执行范围内。", 403)
+        binding = draft.get("formal")
+        if binding and binding.get("kind") != "engineering":
+            raise IntakeError("历史正式任务仅供查看。", 403)
+        if binding and action == "formal_observe":
+            return
+        if binding and action == "formal_hold":
+            if type(body.get("held")) is not bool:
+                raise IntakeError("当前接管选项无效。")
+            binding["held"] = body["held"]
+            binding["manualControl"] = {"at": now(), "held": body["held"], **body["serviceAuthority"]}
+            return
+        package = self.confirmed_package(draft)
+        latest = (draft.get("plans") or [None])[-1]
+        if not latest or not latest["confirmedAt"] or latest["basis"] != package["basis"] or latest["documentRevision"] != package["revision"]:
+            raise IntakeError("请先确认当前需求文档及对应工程计划。", 409)
+        if action == "formal_create" and not binding:
+            draft["formal"] = self.formal.register(draft, package, latest)
+        elif not binding:
+            raise IntakeError("请先将此确认计划登记为 EO 工单。", 409)
+        elif action == "formal_dispatch":
+            if latest["plan"]["mode"] == "suggestion":
+                raise IntakeError("请先保存为人工或自主编排模式并确认。", 409)
+            if (binding["documentRevision"] != package["revision"] or binding["planRevision"] != latest["revision"]
+                    or binding["basis"] != package["basis"]
+                    or binding["planSha256"] != plan_digest(latest)):
+                raise IntakeError("正式工单的已确认版本已变化。请保留原记录并新建需求。", 409)
+            if not binding.get("authorizedAt"):
+                binding["authorizedAt"] = now()
+                binding["authorizedBy"] = body["serviceAuthority"]
+                binding["state"] = "已下达，等待权威运行回执"
 
     def retrieve(self, draft, terms):
         try:

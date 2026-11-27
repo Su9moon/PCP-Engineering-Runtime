@@ -136,16 +136,20 @@ class Handler(BaseHTTPRequestHandler):
         ident = path.removeprefix("/api/intake/") if path != "/api/intake" else None
         if ident is not None:
             intake.path(ident)
-        local_planner = address == "127.0.0.1" and ipaddress.IPv4Address(self.client_address[0]).is_loopback
+        peer = ipaddress.IPv4Address(self.client_address[0])
+        local_planner = address == "127.0.0.1" and peer.is_loopback
+        trusted_lan = getattr(self.server, "lan_operator", False) and peer in self.server.clients
         grant = getattr(self.server, "operator_grant", None)
         actions = grant.get("actions") if isinstance(grant, dict) and grant.get("project") == PROJECT else None
-        local_actions = set(actions) if local_planner and isinstance(actions, list) and all(isinstance(a, str) for a in actions) else set()
+        local_actions = set(actions) if (local_planner or trusted_lan) and isinstance(actions, list) and all(isinstance(a, str) for a in actions) else set()
+        generalized = grant.get("engineering") if grant else None
+        legacy = ident is not None and ident == (grant or {}).get("formalDraft")
 
         def apply_capabilities(result):
             caps = result["capabilities"]
             caps["dialogueAvailable"] = caps["plannerAvailable"] and "ai_reply" in local_actions
             caps["plannerAvailable"] &= "plan_generate" in local_actions
-            formal = intake.formal and ident == grant.get("formalDraft") if grant else False
+            formal = bool(intake.formal and ident and (generalized or legacy)) and not (generalized and legacy)
             caps["formalActions"] = sorted(FORMAL_ACTIONS & local_actions) if formal else []
             return result
 
@@ -166,13 +170,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(action, str):
             raise IntakeError("草稿操作名称无效。")
         authorized_origin = origin == f"https://{self.headers.get('Host')}"
-        if ident and grant and ident == grant.get("formalDraft") and not (local_actions and authorized_origin):
-            raise IntakeError("该正式草稿仅接受已授权的本机确认与修改。", 403)
+        if legacy and (generalized or not (local_actions and authorized_origin)):
+            raise IntakeError("此历史正式草稿保留为只读记录。", 403)
         if action in FORMAL_ACTIONS | MODEL_ACTIONS:
             if action not in local_actions or not authorized_origin:
                 raise IntakeError("此操作需要已配置的本机服务授权和同源请求。", 403)
-            if action in FORMAL_ACTIONS and (not ident or ident != grant.get("formalDraft")):
+            if action in FORMAL_ACTIONS and (not ident or not (generalized or legacy)):
                 raise IntakeError("此草稿不在服务端正式执行授权范围内。", 403)
+            data["serviceAuthority"] = {"principal": "service-owner", "listener": str(address), "peer": str(peer)}
         return apply_capabilities(intake.update(ident, data))
 
 
@@ -185,8 +190,9 @@ def main():
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(tls["cert"], tls["key"])
     source_settings = dict(config["sources"])
-    if grant and isinstance(grant.get("formal"), dict) and grant["formal"].get("eoRepo") == source_settings.get("eo"):
-        source_settings["eo_ref"] = grant["formal"].get("eoRef")
+    formal_settings = (grant or {}).get("engineering") or (grant or {}).get("formal")
+    if isinstance(formal_settings, dict) and formal_settings.get("eoRepo") == source_settings.get("eo"):
+        source_settings["eo_ref"] = formal_settings.get("eoRef")
     sources = Sources(source_settings, ROOT.parent)
     intake = None
     if settings := config.get("intake"):
@@ -209,6 +215,7 @@ def main():
                 print(f"Dashboard V1 HTTPS listening on {private.server_address[0]}:{private.server_address[1]}", flush=True)
                 private.intake = intake
                 private.operator_grant = grant
+                private.lan_operator = bool(grant and grant.get("trustedLan") is True)
                 threading.Thread(target=private.serve_forever, daemon=True).start()
         print(f"Dashboard V1 HTTPS listening on {local.server_address[0]}:{local.server_address[1]}", flush=True)
         local.serve_forever()
