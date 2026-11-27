@@ -198,7 +198,7 @@ class Engineering(Formal):
                 "requested_model": self.settings["model"], "requested_effort": self.settings["effort"],
                 **inspect_codex_context(self.settings.get("codexProfile"), run["session"]), "usage": usage}
 
-    def product_readback(self, checkout):
+    def product_readback(self, checkout, commit):
         cfg = json.loads(Path(self.settings["qaConfig"]).read_text())
         snapshot = {key: cfg[key] for key in ("sources", "tls")}
         snapshot["port"] = 0
@@ -222,10 +222,28 @@ class Engineering(Formal):
                     client = build_opener(ProxyHandler({}), HTTPSHandler(context=tls))
                     with client.open(url + "/", timeout=12) as page:
                         html = page.read(1_000_000)
+                    with client.open(url + "/app.js", timeout=12) as script:
+                        digest = hashlib.sha256(script.read(1_000_000)).hexdigest()
+                    source = git(checkout, "show", f"{commit}:dashboard/app.js").encode()
+                    if hashlib.sha256(source).hexdigest() != digest:
+                        raise FormalError("候选产品服务未返回已封存提交中的页面脚本。")
                     with client.open(url + "/api/state", timeout=18) as response:
                         data = json.load(response)
+                    reopened = build_opener(ProxyHandler({}), HTTPSHandler(context=tls))
+                    with reopened.open(url + "/api/state", timeout=18) as new_response:
+                        new_data = json.load(new_response)
+                    listeners = [("回环", "127.0.0.1:8787"), ("可信局域网", cfg["lan"]["address"] + ":8787")]
+                    anonymous = {}
+                    for name, endpoint in listeners:
+                        try:
+                            with client.open("https://" + endpoint + "/", timeout=10) as deployed:
+                                anonymous[name] = deployed.status
+                        except OSError:
+                            anonymous[name] = "读取失败"
                     return {
-                        "pageHttp": page.status, "snapshotHttp": response.status,
+                        "candidateCommit": commit, "scriptSha256": digest, "existingAnonymousHttp": anonymous,
+                        "pageHttp": page.status, "snapshotHttp": response.status, "freshClientHttp": new_response.status,
+                        "reopenedObservedAt": new_data["observedAt"],
                         "chinesePage": b'lang="zh-CN"' in html, "observedAt": data["observedAt"],
                         "connections": [{key: item.get(key) for key in ("label", "status", "observedAt")}
                                         for item in data["connections"]],
@@ -239,14 +257,16 @@ class Engineering(Formal):
                     server.terminate()
                     server.wait(timeout=5)
 
-    def judge(self, binding, request, invocation, result, progress):
+    def judge(self, binding, request, invocation, result, progress, prior):
         checkout = worker_path(self.settings["workspaceRoot"], invocation)
-        diff = git(checkout, "diff", "--no-ext-diff", result["base"], result["commit"])
+        previous = prior.get("commit") if prior else None
+        start = previous if previous and SHA.fullmatch(previous) else result["base"]
+        diff = git(checkout, "diff", "--no-ext-diff", start, result["commit"])
         if len(diff) > self.settings["budget"]["reviewChars"]:
             raise FormalError("提交差异超过当前可审核的资源范围，保留交付物待审。")
         task = request["metadata"]["task"]
         context = json.dumps({"title": task["title"], "acceptance": task["acceptance"],
-                              "base": result["base"], "commit": result["commit"]}, ensure_ascii=False)
+                              "base": start, "commit": result["commit"]}, ensure_ascii=False)
         review_cfg = {**self.planner.settings, **self.settings["roles"]["review"]}
         qa_cfg = {**self.planner.settings, **self.settings["roles"]["qa"]}
         decisions = progress.setdefault("decisions", {})
@@ -284,10 +304,12 @@ class Engineering(Formal):
             proofs.append(proof)
         if "review" not in decisions:
             base_data = {"task": task, "commit": result["commit"], "paths": result["changed"],
-                         "checks": result["tests"][:3], "observations": [entry[1] for entry in notes]}
+                         "checks": result["tests"][:3], "observations": [entry[1] for entry in notes],
+                         "previousReview": prior.get("decisions", {}) if prior else {}}
             text, proof = LocalPlanner(review_cfg).request(
                 "综合下面所有变更分段的复核记录和 Worker 证据，给出独立代码复核决定。"
-                "具体可复现的功能缺陷或越权才退回；以 PASS 或 REWORK 起首后用中文说明。\n"
+                "返工时只验证上次真实缺陷和本轮新增改动。具体可复现的功能缺陷或越权才退回。"
+                "以 PASS 或 REWORK 起首后用中文说明。\n"
                 + json.dumps(base_data, ensure_ascii=False),
                 "你是 Ruflo 的独立代码复核角色。对整个候选提交给出复核决定。",
                 max_tokens=500,
@@ -297,13 +319,19 @@ class Engineering(Formal):
                 raise FormalError("独立代码复核未返回可核验的决定。")
             decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
         if "qa" not in decisions:
-            live = self.product_readback(checkout) if decisions["review"]["state"] == "PASS" else None
-            qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation},
+            live = self.product_readback(checkout, result["commit"]) if decisions["review"]["state"] == "PASS" else None
+            native = self.provider_run(invocation)
+            qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation,
+                                            "id": native["run_id"], "event": native["event_id"],
+                                            "state": native["state"], "exitCode": 0,
+                                            "thread": result["codex_thread"], "stdoutSha256": result["worker_sha256"]},
                        "commit": result["commit"], "paths": result["changed"], "commands": result["tests"][:4],
                        "response": result["response"][:1600], "productReadback": live}
             text, proof = LocalPlanner(qa_cfg).request(
                 "你负责独立产品 QA。按 Worker 实际测试及候选提交在真实当前来源上的 HTTPS 产品读回核对验收。"
                 "跨任务后台续接必须在本项通过后由服务实测，不是当前 Worker 可以事先完成的测试。"
+                "在独立工作区已封存的候选提交执行 HTTPS 读回，生产发布仍待正式验收。"
+                "页面兼容性采用本轮实际 Node 回归证明，不要求未登记的浏览器版本。"
                 "区别待下游验证和本次实际缺陷。以 PASS 或 REWORK 起首并用完整中文说明。\n"
                 + json.dumps(qa_data, ensure_ascii=False),
                 "你是 Ruflo 的独立产品 QA，只给出 QA 决定。",
@@ -460,7 +488,11 @@ class Engineering(Formal):
                 return
             if "decisions" not in row:
                 progress = row.setdefault("reviewProgress", {})
-                row["decisions"] = self.judge(binding, execution["request"], invocation, result, progress)
+                prior = row.get("priorDelivery")
+                if prior:
+                    prior = {**prior, "decisions": {role: item["text"][:500]
+                                                     for role, item in row.get("priorDecisions", {}).items()}}
+                row["decisions"] = self.judge(binding, execution["request"], invocation, result, progress, prior)
                 row.pop("reviewProgress", None)
                 return
             decisions = row["decisions"]
