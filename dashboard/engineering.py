@@ -42,6 +42,29 @@ def json_lines(path, limit=8_000_000):
     return raw, values
 
 
+def inspect_codex_context(home, thread):
+    result = {key: "NOT_EXPOSED_BY_RUNTIME" for key in ("actual_model", "actual_effort")}
+    if not home or not re.fullmatch(r"[a-f0-9-]{36}", thread):
+        return result
+    try:
+        matches = [path for path in (Path(home) / "sessions").glob("????/??/??/*-" + thread + ".jsonl")
+                   if path.is_file() and not path.is_symlink()]
+        if len(matches) == 1:
+            with matches[0].open("rb") as session:
+                while line := session.readline(2_000_000):
+                    value = json.loads(line)
+                    if value.get("type") == "turn_context":
+                        payload = value["payload"]
+                        for source, target in (("model", "actual_model"), ("effort", "actual_effort")):
+                            setting = payload.get(source)
+                            if isinstance(setting, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,60}", setting):
+                                result[target] = setting
+                        break
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return result
+
+
 class Engineering(Formal):
     def __init__(self, settings, database, render, project, planner):
         super().__init__(settings, database, render)
@@ -173,7 +196,7 @@ class Engineering(Formal):
         return {"response": outputs[-1][:3500], "commit": head, "base": base, "tests": tests[-8:], "changed": names,
                 "codex_thread": run["session"], "worker_sha256": hashlib.sha256(raw).hexdigest(),
                 "requested_model": self.settings["model"], "requested_effort": self.settings["effort"],
-                "actual_model": "NOT_EXPOSED_BY_RUNTIME", "actual_effort": "NOT_EXPOSED_BY_RUNTIME", "usage": usage}
+                **inspect_codex_context(self.settings.get("codexProfile"), run["session"]), "usage": usage}
 
     def product_readback(self, checkout):
         cfg = json.loads(Path(self.settings["qaConfig"]).read_text())
