@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 const [role, provider, configPath, revision] = process.argv.slice(2);
 const config = JSON.parse(readFileSync(configPath, "utf8"));
@@ -17,6 +18,17 @@ if (role === "hub") {
   const { createWorker } = await providerModule("worker/worker.ts");
   const signal = new AbortController();
   process.on("SIGTERM", () => signal.abort());
+  // systemd orders the processes, and the provider may still be opening its HTTP port.
+  const readyBy = Date.now() + 15000;
+  while (!signal.signal.aborted) {
+    const response = await fetch(new URL("/v1/state", config.url), {
+      signal: AbortSignal.any([signal.signal, AbortSignal.timeout(600)]),
+    }).catch(() => null);
+    if (response?.status === 401) break;
+    if (Date.now() >= readyBy) throw new Error("等待本机 Autoloop Hub 监听超时。");
+    await delay(250);
+  }
+  if (signal.signal.aborted) process.exit(0);
   const { name, key, capacity } = config.worker;
   console.log("已启动现有 Worker", name);
   await createWorker({ hub: hubClient(config.url, key), name, capacity, wait: 8, log: console.log }).run(signal.signal);
