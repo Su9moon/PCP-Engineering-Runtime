@@ -24,11 +24,11 @@ function labelFor(control, name) {
   return control;
 }
 
-function loadIntake() {
+function loadIntake(force = false) {
   const route = intakeRoute();
   if (!route) return;
   const container = el("view");
-  if (container.dataset.intakeRoute === route[0] && container.querySelector(".intake-workspace")) return;
+  if (force !== true && container.dataset.intakeRoute === route[0] && container.querySelector(".intake-workspace")) return;
   const version = ++intakeRender;
   container.replaceChildren(node("p", "note", "正在打开草稿…"));
   const tasks = [intakeApi(null), route[1] ? intakeApi(route[1]) : Promise.resolve(null)];
@@ -240,9 +240,11 @@ function intakeExecution(draft, caps, change) {
   if (record?.kind === "engineering" || caps.formalActions?.includes("formal_create") && !record)
     return engineeringExecution(draft, caps, change);
   const last = record?.observed;
-  const run = record?.dispatch ?? (last?.provider ? {...last.provider, invocation: last.invocation} : null);
+  const run = last?.provider ?? record?.dispatch;
   const actions = new Set(caps.formalActions);
-  return panel("正式工单与执行", last?.state ?? (run ? "已派发，等待 Worker 回执" : record ? "待授权派发" : "待登记"),
+  const state = last?.state ? reportedState(esReportStates, last.state)
+    : run ? "已派发，等待 Worker 回执" : record ? "待授权派发" : "待登记";
+  return panel("正式工单与执行", state,
     node("div", "actions",
       actions.has("formal_create") && !record
         ? button("创建 EO Job 和 Workorder", () => change({action: "formal_create"}), "btn primary") : null,
@@ -250,36 +252,105 @@ function intakeExecution(draft, caps, change) {
         ? button("授权并派发非生产任务", () => change({action: "formal_dispatch"}), "btn primary") : null,
       actions.has("formal_observe") && record
         ? button("读取执行结果", () => change({action: "formal_observe"})) : null),
-    record ? entries([["EO Job", record.job], ["EO Workorder", record.workorder], ["EO 提交", record.commit],
-      ["ES Request", record.request], ["ES Execution", record.execution], ["ES Attempt", last?.attempt],
-      ["调用", run?.invocation], ["Autoloop Event", run?.event], ["Autoloop Run", run?.run],
-      ["Worker 运行状态", last?.provider?.state], ["Codex Thread", last?.provider?.session]]) : null,
-    last?.result?.response ? node("p", "note", last.result.response) : null,
-    last?.result ? button("导出执行报告", () => exportDocument(record.workorder + "-执行报告.md", [
-      "# 工程执行报告", "", "目标：" + draft.title, "交付结果：" + last.result.response,
-      "EO 工单：" + record.workorder, "EO 执行依据：" + record.commit, "ES 执行：" + record.execution,
-      "ES Attempt：" + last.attempt, "ES 状态：" + last.state,
-      "Autoloop Event / Run：" + run.event + " / " + run.run, "Codex 会话：" + last.provider.session,
-    ].join(String.fromCharCode(10)))) : null);
+    record ? executionReport(draft, {
+      ...run, provider: last?.provider?.state, providerSession: last?.provider?.session,
+      request: record.request, execution: record.execution, attempt: last?.attempt,
+      invocation: last?.invocation ?? run?.invocation, state: last?.state, result: last?.result,
+    }, state, true) : null);
+}
+
+const esReportStates = {
+  QUEUED: "ES 已排队", RUNNING: "ES 执行中", REVIEW_READY: "ES 已收到交付，等待验收",
+  RESULT_READY: "ES 已收到交付，等待验收", DONE: "ES 已记录执行完成",
+  REVISION_REQUESTED: "ES 已要求返工", RECOVERABLE: "ES 等待恢复", REJECTED: "ES 已拒绝",
+  NEEDS_INPUT: "ES 等待补充资料", FAILED: "ES 已记录失败", CANCELLED: "ES 已取消", BLOCKED: "ES 已阻塞",
+};
+const providerReportStates = {
+  queued: "排队中", claimed: "已领取", running: "运行中", done: "提供方运行已结束",
+  failed: "提供方运行失败", cancelled: "提供方运行已取消", unknown: "提供方运行终态未知",
+};
+const roleReportStates = {PASS: "通过", REWORK: "需返工", CONTINUE: "同意继续"};
+
+function reportedState(labels, code) {
+  return code ? (Object.hasOwn(labels, code) ? labels[code] : "状态未知") + "（" + code + "）" : "未记录";
+}
+
+function reportGitRef(repo, sha, path = "") {
+  return /^[a-f0-9]{40}$/.test(sha ?? "") ? repo + "@" + sha + (path ? ":" + path : "") : null;
+}
+
+function executionReport(draft, run, state, expanded, task) {
+  const record = draft.formal;
+  const result = run.result;
+  const delivery = run.eoDelivery;
+  const eoRepo = gitEO.replace("https://github.com/", "");
+  const projectRepo = gitProject.replace("https://github.com/", "");
+  const workerEvidence = result?.worker_output_sha256
+    ? {log: "stdout-1.log", proof: result.worker_output_sha256}
+    : result?.worker_sha256
+      ? {log: "stdout", proof: result.worker_sha256}
+      : null;
+  const logRef = Number.isInteger(run.run) && /^[a-f0-9]{64}$/.test(workerEvidence?.proof ?? "")
+    ? "autoloop:run:" + run.run + "/" + workerEvidence.log + "#sha256=" + workerEvidence.proof : null;
+  const sections = [
+    ["执行说明", [["目标", draft.title], ...(task ? [["任务", task.title + "（" + task.id + "）"]] : []),
+      ["当前状态", state], ["计划阻碍", record.obstacle], ["本次执行的失败原因", run.failure]]],
+    ["EO 工单与正式回写", [
+      ["EO Job", record.job], ["EO Workorder", record.workorder],
+      ["EO 工单提交", reportGitRef(eoRepo, record.commit, record.workorder ? "workorders/" + record.workorder + "/workorder.yaml" : "")],
+      ["EO 回写提交", reportGitRef(eoRepo, delivery)],
+      ...[["Result", "result"], ["Evidence", "evidence"], ["Review", "review"]].map(([label, kind]) =>
+        ["EO " + label, run.eoRecords?.[kind] ? reportGitRef(eoRepo, delivery, run.eoRecords[kind]) : null]),
+    ]],
+    ["ES 执行记录", [["ES Request", run.request], ["ES Execution", run.execution], ["ES Attempt", run.attempt],
+      ["ES Invocation", run.invocation], ["ES 状态", reportedState(esReportStates, run.state)]]],
+    ["Autoloop 与 Worker 回执", [
+      ["Autoloop Event", run.event], ["Autoloop Run", run.run], ["Autoloop 规则", run.providerRule],
+      ["Autoloop 状态", reportedState(providerReportStates, run.provider)],
+      ["Codex 会话", run.providerSession ?? result?.codex_thread],
+      ["Worker 日志引用", logRef], ["Worker 交付原文", result?.response],
+    ]],
+    ["代码与测试", [["Git 提交", reportGitRef(projectRepo, result?.commit)],
+      ["通过的定向测试命令", result?.tests?.join("\n")]]],
+    ["独立验收与推进决定", [
+      ...[["独立代码复核", "review"], ["独立产品 QA ", "qa"], ["Supervisor ", "supervisor"]].flatMap(([label, role]) => {
+        const decision = run.decisions?.[role];
+        return [[label + "决定", reportedState(roleReportStates, decision?.state)], [label + "说明", decision?.text],
+          [label + "回执 ID", decision?.receipt?.messageId]];
+      }),
+    ]],
+  ].map(([heading, rows]) => [heading, rows.map(([label, value]) =>
+    [label, value === null || value === undefined || value === "" ? "未记录" : String(value)])]);
+  const filename = [record.workorder, task?.id, "执行报告.md"].filter(Boolean).join("-");
+  const markdown = ["# 工程执行报告", ...sections.map(([heading, rows]) => [
+    "## " + heading, "", ...rows.map(([label, value]) =>
+      ("    " + label + " · " + value.replace(/\r\n?|\n/g, "\n    "))),
+  ].join("\n"))].join("\n\n") + "\n";
+  const preview = node("details", "intake-source", node("summary", "", "查看执行报告"),
+    sections.map(([heading, rows]) => node("div", "detail-block", node("h3", "", heading),
+      entries(rows.map(([label, value]) => [label, node("span", "intake-field-value", value)])))));
+  preview.open = expanded;
+  return node("div", "stack", button("导出执行报告", () => exportDocument(filename, markdown)), preview);
 }
 
 function engineeringExecution(draft, caps, change) {
   const receipt = draft.formal;
   const allowed = new Set(caps.formalActions ?? []);
-  const readable = {QUEUED:"待 Worker 领取", RUNNING:"执行中", REVIEW_READY:"待独立验收", DONE:"已验收",
-    REVISION_REQUESTED:"整改待执行", RECOVERABLE:"待恢复", REJECTED:"已拒绝", NEEDS_INPUT:"待补充资料"};
   const rows = receipt ? receipt.order.map((id) => {
-    const task = receipt.tasks.find(item => item.id === id);
-    const run = receipt.runs[id];
-    const detail = run ? node("div", "stack",
-      entries([["ES Execution", run.execution], ["ES Attempt", run.attempt], ["ES Invocation", run.invocation],
-        ["Autoloop Event", run.event], ["Autoloop Run", run.run], ["提供方状态", readable[run.provider] ?? run.provider],
-        ["Git 提交", run.result?.commit], ["EO 验收提交", run.eoDelivery]]),
-      run.result ? node("p", "note", run.result.response) : null,
-      ...Object.entries(run.decisions ?? {}).map(([name, answer]) =>
-        node("p", "sub", ({review:"独立复核", qa:"产品 QA", supervisor:"Supervisor"})[name] + " · " + answer.text))
-      ) : null;
-    return [task.title, task.depends.join(", ") || "无", readable[run?.state] ?? run?.state ?? "待前置任务", detail];
+    const task = receipt.tasks.find((item) => item.id === id);
+    const run = receipt.runs[id] ?? {};
+    const state = run.state ? reportedState(esReportStates, run.state)
+      : !receipt.authorizedAt ? "等待授权下达"
+      : receipt.held ? "计划暂停，等待恢复"
+      : task.depends.some((dep) => receipt.runs[dep]?.state !== "DONE") ? "等待前置任务验收"
+      : "等待后端下达";
+    const hasDelivery = ["REVIEW_READY", "DONE", "REVISION_REQUESTED"].includes(run.state);
+    const report = executionReport(draft, {
+      ...run, result: hasDelivery ? run.result : null, eoDelivery: hasDelivery ? run.eoDelivery : null,
+      decisions: hasDelivery ? run.decisions ?? (run.state === "REVISION_REQUESTED" ? run.priorDecisions : null) : null,
+      failure: run.state === "RECOVERABLE" ? run.failure : null,
+    }, state, false, task);
+    return [task.title, task.depends.join(", ") || "无", state, report];
   }) : [];
   return panel("正式工程下达与交付", receipt?.state ?? "确认需求和工程计划后可登记",
     receipt ? entries([["EO Job", receipt.job], ["EO Workorder", receipt.workorder], ["EO 工单提交", receipt.commit],
@@ -292,7 +363,7 @@ function engineeringExecution(draft, caps, change) {
         ? button("授权并下达非生产工程计划", () => change({action:"formal_dispatch"}), "btn primary") : null,
       receipt?.authorizedAt && allowed.has("formal_hold")
         ? button(receipt.held ? "恢复后续任务" : "暂停后续任务", () => change({action:"formal_hold", held:!receipt.held})) : null,
-      receipt ? button("读取当前执行状态", loadIntake) : null),
+      receipt ? button("读取当前执行状态", () => loadIntake(true)) : null),
     receipt ? table(["任务","依赖","状态","运行与交付证据"], rows, "等待已授权任务") : null);
 }
 

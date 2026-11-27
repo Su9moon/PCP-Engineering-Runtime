@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from engineering import Engineering
 from intake import Intake, IntakeError
 from intake_context import BASELINES, PCP, PLAN_WORKORDER, WORKORDER, ProjectContext
 from sources import PROJECT
@@ -76,6 +77,92 @@ class IntakeTests(unittest.TestCase):
         self.assertIsNone(second["project"])
         self.assertIn("未配置", result["capabilities"]["llmGap"])
         self.assertEqual(self.open_store().read(None)["drafts"][0]["id"], first["id"])
+
+    def test_report_reads_eo_delivery_paths_bound_to_each_attempt(self):
+        records = {"result": "results/RESULT-20261127-001/result.yaml",
+                   "evidence": "evidence/EVD-20261127-001/evidence.yaml",
+                   "review": "reviews/REVIEW-20261127-001/review.yaml"}
+        eo = self.root / "formal-eo"
+        base = repo(eo, {"README.md": "fixture"})
+        for path in records.values():
+            file = eo / path
+            file.parent.mkdir(parents=True)
+            file.write_text("fixture\n", encoding="utf-8")
+        git(eo, "add", ".")
+        git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+            "commit", "-qm", "Fixture delivery", "-m", "Result-Attempt: ATT-1")
+        delivery = git(eo, "rev-parse", "HEAD")
+        draft = self.create("交付报告")
+        runs = {"t1": {"attempt": "ATT-1", "state": "DONE", "eoDelivery": delivery},
+                "t2": {"attempt": "ATT-10", "state": "REVIEW_READY", "eoDelivery": delivery}}
+        draft["formal"] = {"kind": "engineering", "runs": runs}
+        self.intake.save(draft)
+        self.intake.formal = Engineering({"eoRepo": eo, "eoBase": base, "eoRef": "refs/heads/fixture"},
+                                        self.root / "unused", None, self.runtime, None)
+
+        view = self.intake.read(draft["id"])["draft"]["formal"]["runs"]
+        self.assertEqual(view["t1"]["eoRecords"], records)
+        self.assertEqual(view["t2"]["eoRecords"], {})
+        self.assertEqual(self.intake.load(draft["id"])["formal"]["runs"], runs)
+        blob = git(eo, "hash-object", str(eo / next(iter(records.values()))))
+        self.assertEqual(self.intake.formal.delivery_records(blob, "ATT-1"), {})
+
+        (eo / next(iter(records.values()))).write_text("updated\n", encoding="utf-8")
+        git(eo, "add", ".")
+        git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+            "commit", "-qm", "Updated delivery", "-m", "Result-Attempt: ATT-1")
+        updated = git(eo, "rev-parse", "HEAD")
+        self.assertEqual(self.intake.formal.delivery_records(updated, "ATT-1"), {})
+
+    def test_report_finds_eo_records_added_by_merge_commit(self):
+        records = {"result": "results/RESULT-20261127-002/result.yaml",
+                   "evidence": "evidence/EVD-20261127-002/evidence.yaml",
+                   "review": "reviews/REVIEW-20261127-002/review.yaml"}
+        eo = self.root / "merge-eo"
+        base = repo(eo, {"README.md": "base\n"})
+        git(eo, "checkout", "-qb", "left")
+        (eo / "left.txt").write_text("left\n", encoding="utf-8")
+        git(eo, "add", "left.txt")
+        git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+            "commit", "-qm", "left")
+        git(eo, "checkout", "-qb", "right", base)
+        for path in records.values():
+            file = eo / path
+            file.parent.mkdir(parents=True)
+            file.write_text("fixture\n", encoding="utf-8")
+        git(eo, "add", "results", "evidence", "reviews")
+        git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+            "commit", "-qm", "Create delivery records")
+        git(eo, "checkout", "left")
+        git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+            "merge", "--no-ff", "-m", "Merge delivery\n\nResult-Attempt: ATT-1", "right")
+        delivery = git(eo, "rev-parse", "HEAD")
+        self.intake.formal = Engineering({"eoRepo": eo, "eoBase": base, "eoRef": "refs/heads/fixture"},
+                                         self.root / "unused", None, self.runtime, None)
+
+        self.assertEqual(self.intake.formal.delivery_records(delivery, "ATT-1"), records)
+
+    def test_execution_report_fields_follow_the_current_invocation(self):
+        engineering = Engineering({"eoRepo": self.eo, "eoBase": "a" * 40, "eoRef": "refs/heads/fixture"},
+                                  self.root / "unused", None, self.runtime, None)
+        row = {"execution": "EXE-1", "invocation": "AINV-1", "provider": "done", "event": 2, "run": 3,
+               "providerSession": "old-thread", "providerRule": "old-rule"}
+        binding = {"authorizedAt": "fixture", "order": ["t1"], "tasks": [{"id": "t1", "depends": []}], "runs": {"t1": row}}
+        execution = {"request": {"request_id": "REQ-1"}, "state": "RUNNING",
+                     "attempts": [{"attempt_id": "ATT-2", "invocation_id": "AINV-2"}]}
+        provider = {"event_id": 4, "run_id": 5, "state": "claimed", "session": "thread-2",
+                    "rule": "fixture"}
+        with patch.object(engineering, "kernel") as kernel, \
+                patch.object(engineering, "provider_run", side_effect=[None, provider]) as provider_run:
+            kernel.return_value.get_execution.return_value = execution
+            engineering.advance(binding)
+            self.assertEqual(row, {"request": "REQ-1", "execution": "EXE-1", "attempt": "ATT-2",
+                                   "invocation": "AINV-2", "state": "RUNNING"})
+            engineering.advance(binding)
+            self.assertEqual(provider_run.call_args.args, ("AINV-2",))
+            self.assertEqual([row[key] for key in ("event", "run", "provider", "providerSession", "providerRule")],
+                             [4, 5, "claimed", "thread-2", "fixture"])
+            kernel.return_value.authorize_attempt.assert_not_called()
 
     def test_only_explicit_edits_confirm_and_retain_other_fields(self):
         draft = self.create()

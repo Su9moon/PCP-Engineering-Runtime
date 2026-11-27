@@ -56,8 +56,12 @@ def claim(settings, config):
           "SELECT runs.id FROM runs JOIN run_events ON runs.id=run_events.run_id JOIN events ON events.id=run_events.event_id "
           "WHERE runs.id=? AND runs.state='claimed' AND runs.rule=? AND events.source=? AND events.key=?",
           (int(native_run), settings["rule"], settings["source"], invocation))
+    return invocation, authorized_request(settings, config, invocation)
+
+
+def authorized_request(settings, config, invocation):
     row = query(config["sources"]["es"],
-                """SELECT requests.body_json FROM attempts JOIN authorities USING(attempt_id)
+                """SELECT requests.body_json, attempts.execution_id FROM attempts JOIN authorities USING(attempt_id)
                    JOIN executions USING(execution_id) JOIN requests ON executions.request_id=requests.request_id
                    WHERE attempts.invocation_id=? AND attempts.participant_id=?
                    AND attempts.state IN ('CLAIMED','RUNNING') AND authorities.status='CURRENT'""",
@@ -68,7 +72,7 @@ def claim(settings, config):
             or value["constraints"]["production"] is not False
             or value["constraints"]["paths"] != settings["paths"]):
         raise WorkerError("本机执行授权没有覆盖该项目与路径。")
-    return invocation, value
+    return value, row["execution_id"]
 
 
 def checkout(settings, invocation, contract, prior):
@@ -80,8 +84,15 @@ def checkout(settings, invocation, contract, prior):
     project = Path(settings["projectRoot"]).resolve(strict=True)
     if target.is_symlink():
         raise WorkerError("隔离工作区路径不是普通项目目录。")
+    start = prior["commit"] if prior else base
+    branch = "pcp/" + invocation.lower()
+    if prior and (not INVOCATION.fullmatch(prior["invocation"]) or not SHA.fullmatch(start)):
+        raise WorkerError("前次待返工的封存引用无效。")
     if target.exists():
-        if checked_git(target, "rev-parse", "HEAD") != base or checked_git(target, "status", "--porcelain"):
+        if (checked_git(target, "rev-parse", "HEAD") != start
+                or checked_git(target, "branch", "--show-current") != branch
+                or checked_git(target, "status", "--porcelain")
+                or checked_git(target, "merge-base", base, start) != base):
             raise WorkerError("此尝试已有工作区或成果，保留现状供监督和对账。")
         return target
     checked_git(root, "clone", "--no-local", "--quiet", "--no-tags", str(project), str(target))
@@ -92,51 +103,88 @@ def checkout(settings, invocation, contract, prior):
         if previous.is_symlink() or not previous.is_dir():
             raise WorkerError("缺少已验收前置任务的独立 Git 工作区。")
         checked_git(target, "fetch", "--no-tags", str(previous), base)
-    checked_git(target, "switch", "--create", "pcp/" + invocation.lower(), base)
     if prior:
         previous = root / prior["invocation"]
-        commit = prior["commit"]
-        if (not INVOCATION.fullmatch(prior["invocation"]) or not SHA.fullmatch(commit)
-                or previous.is_symlink() or checked_git(previous, "rev-parse", "HEAD") != commit):
+        if previous.is_symlink() or not previous.is_dir() or checked_git(previous, "rev-parse", "HEAD") != start:
             raise WorkerError("前次待返工的封存提交不可验证。")
-        checked_git(target, "fetch", "--no-tags", str(previous), commit)
-        if checked_git(target, "merge-base", base, commit) != base:
+        checked_git(target, "fetch", "--no-tags", str(previous), start)
+        if checked_git(target, "merge-base", base, start) != base:
             raise WorkerError("前次待返工的提交不属于当前授权基线。")
-        patch = subprocess.check_output(["git", "-C", str(target), "diff", "--binary", base, commit, "--"])
-        subprocess.run(["git", "-C", str(target), "apply", "--index", "-"], input=patch, check=True)
     checked_git(target, "remote", "remove", "origin")
     checked_git(target, "config", "--local", "user.name", "PCP Codex Worker")
     checked_git(target, "config", "--local", "user.email", "pcp-codex-worker@localhost")
+    checked_git(target, "switch", "--create", branch, start)
     return target
 
 
-def rework_context(config, request):
+def attempt_history(database, execution, invocation):
+    # The draft is a UI projection and can lag behind the newly issued native claim.
+    with sqlite3.connect(Path(database).as_uri() + "?mode=ro", uri=True) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            """SELECT a.invocation_id, a.failure_json, r.result_json
+               FROM attempts a
+               JOIN attempts current ON current.execution_id = a.execution_id
+               LEFT JOIN results r ON r.attempt_id = a.attempt_id AND a.state = 'COMPLETED'
+               WHERE current.execution_id = ? AND current.invocation_id = ?
+                 AND (a.created_at, a.attempt_id) < (current.created_at, current.attempt_id)
+               ORDER BY a.created_at DESC, a.attempt_id DESC""",
+            (execution, invocation),
+        ).fetchall()
+    return rows
+
+
+def rework_context(config, request, execution, invocation):
+    history = attempt_history(config["sources"]["es"], execution, invocation)
+    if not history:
+        return {}, None
+    delivery = None
+    for attempt in history:
+        if attempt["result_json"]:
+            payload = json.loads(attempt["result_json"])["payload"]
+            if payload.get("base") != request["constraints"]["base_commit"]:
+                raise WorkerError("前次封存结果与当前授权基线不一致。")
+            delivery = {"invocation": attempt["invocation_id"], "commit": payload["commit"]}
+            break
+
     metadata = request["metadata"]
     workorder = metadata["workorder_id"]
     plan = request["constraints"]["plan_sha256"]
+    evidence = {}
     directory = Path(config["intake"]["directory"])
     for file in directory.glob("*.json"):
         if not re.fullmatch(r"[a-f0-9]{32}", file.stem) or file.is_symlink():
             continue
         binding = json.loads(file.read_text()).get("formal", {})
-        if (binding.get("kind") != "engineering" or binding.get("workorder") != workorder
-                or binding.get("planSha256") != plan or not binding.get("authorizedAt")):
-            continue
         run = binding.get("runs", {}).get(metadata["task"]["id"], {})
-        prior = run.get("priorDecisions", {})
-        delivery = run.get("priorDelivery") if prior else None
-        recovery = config["operator"]["engineering"].get("approvedRecovery", {})
-        guidance = ""
-        if (delivery and recovery.get("requestId") == f"REQ-{workorder}-{metadata['task']['id']}"
-                and delivery["invocation"] == recovery.get("afterInvocation")):
-            guidance = recovery["instruction"]
-            delivery = {**delivery, "preserveTree": recovery.get("preserveTree") is True}
-        return {
-            "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
-            "前一次交付失败": run.get("priorFailure", run.get("failure")),
-            "Supervisor 本次确认的返工范围": guidance,
-        }, delivery
-    return {}, None
+        if (binding.get("kind") != "engineering" or binding.get("workorder") != workorder
+                or binding.get("planSha256") != plan or not binding.get("authorizedAt")
+                or run.get("execution") != execution):
+            continue
+        if delivery and run.get("invocation") == delivery["invocation"] and run.get("decisions"):
+            evidence = run["decisions"]
+        elif delivery and run.get("priorDelivery") == delivery:
+            evidence = run.get("priorDecisions", {})
+        break
+
+    latest = history[0]
+    failure = json.loads(latest["failure_json"]) if latest["failure_json"] else {}
+    recovery = config["operator"]["engineering"].get("approvedRecovery", {})
+    guidance = ""
+    if (recovery.get("requestId") == request["request_id"]
+            and recovery.get("afterInvocation") == latest["invocation_id"]
+            and recovery.get("supervisorReceipt")):
+        guidance = recovery.get("instruction", "")
+        delivery_invocation = recovery.get("priorDeliveryInvocation", latest["invocation_id"])
+        if recovery.get("preserveTree") is True:
+            if not delivery or delivery["invocation"] != delivery_invocation:
+                raise WorkerError("仅复验证据的授权未匹配前次 ES 封存结果。")
+            delivery["preserveTree"] = True
+    return {
+        "独立复核和 QA": {role: item["text"][:1600] for role, item in evidence.items()},
+        "前一次交付失败": failure.get("reason"),
+        "Supervisor 本次确认的返工范围": guidance,
+    }, delivery
 
 
 def main():
@@ -145,8 +193,8 @@ def main():
     if not grant or grant["project"] != PROJECT:
         raise WorkerError("未找到归属服务用户的项目授权。")
     settings = grant["engineering"]
-    invocation, request = claim(settings, config)
-    rework, prior = rework_context(config, request)
+    invocation, (request, execution) = claim(settings, config)
+    rework, prior = rework_context(config, request, execution, invocation)
     target = checkout(settings, invocation, request["constraints"], prior)
     data = {
         "task": request["metadata"]["task"],

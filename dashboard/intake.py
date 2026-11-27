@@ -235,7 +235,15 @@ class Intake:
             if ident is None:
                 return {"drafts": self.recent(), "capabilities": self.config_view()}
             draft = self.load(ident)
-            return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
+        return self.draft_view(draft)
+
+    def draft_view(self, draft):
+        binding = draft.get("formal") or {}
+        if binding.get("kind") == "engineering" and isinstance(self.formal, Engineering):
+            for run in binding["runs"].values():
+                if run.get("eoDelivery"):
+                    run["eoRecords"] = self.formal.delivery_records(run["eoDelivery"], run.get("attempt"))
+        return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
 
     def update(self, ident, body):
         if ident is not None and body.get("action") == "plan_generate":
@@ -254,7 +262,7 @@ class Intake:
                 draft["version"] += 1
                 draft["updatedAt"] = now()
                 self.save(draft)
-            return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
+        return self.draft_view(draft)
 
     @staticmethod
     def check_version(draft, body):
@@ -291,7 +299,7 @@ class Intake:
             current["version"] += 1
             current["updatedAt"] = now()
             self.save(current)
-        return {"draft": current, "status": review_state(current), "capabilities": self.config_view()}
+        return self.draft_view(current)
 
     def ai_reply(self, ident, body):
         with self.lock:
@@ -313,7 +321,7 @@ class Intake:
             current["version"] += 1
             current["updatedAt"] = now()
             self.save(current)
-        return {"draft": current, "status": review_state(current), "capabilities": self.config_view()}
+        return self.draft_view(current)
 
     def apply(self, draft, body):
         action = body.get("action")

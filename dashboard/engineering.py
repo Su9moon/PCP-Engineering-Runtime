@@ -140,15 +140,17 @@ class Engineering(Formal):
         self.canonical_workorder(binding)
         self.verify_routing()
         prior = execution["attempts"]
-        limit = self.settings["budget"]["attempts"]
-        recovery = self.settings.get("approvedRecovery", {})
-        if (execution["state"] == "REVISION_REQUESTED" and prior
-                and execution["request_id"] == recovery.get("requestId")
-                and prior[-1]["invocation_id"] == recovery.get("afterInvocation")
-                and recovery.get("supervisorReceipt")):
-            limit = max(limit, len(prior) + 1)
-        if execution["state"] in ("RECOVERABLE", "REVISION_REQUESTED") and len(prior) >= limit:
-            raise FormalError("该任务已达到服务端授权的尝试预算。")
+        if execution["state"] in ("RECOVERABLE", "REVISION_REQUESTED"):
+            limit = self.settings["budget"].get("attempts")
+            if limit is not None:
+                if type(limit) is not int or limit < 1:
+                    raise FormalError("服务端授权的尝试预算配置无效。")
+                recovery = self.settings.get("approvedRecovery", {})
+                approved = (prior and recovery.get("requestId") == execution["request_id"]
+                            and recovery.get("afterInvocation") == prior[-1]["invocation_id"]
+                            and recovery.get("supervisorReceipt"))
+                if len(prior) >= limit and not approved:
+                    raise FormalError(f"该任务已使用 {len(prior)} 次尝试，服务端显式授权预算为 {limit} 次。")
         if not prior or execution["state"] in ("RECOVERABLE", "REVISION_REQUESTED"):
             attempt = kernel.authorize_attempt(execution["execution_id"], self.settings["worker"],
                                                f"{execution['request_id']}-authority-{len(prior) + 1}")
@@ -438,6 +440,32 @@ class Engineering(Formal):
             files[f"{folders[kind]}/{refs[kind]}/{kind}.yaml"] = yaml.safe_dump(record, allow_unicode=True, sort_keys=False).encode()
         return self.commit_records(head, files, f"登记工程任务验收 {task}\n\n{marker}\n")
 
+    def delivery_records(self, commit, attempt):
+        if not isinstance(commit, str) or not SHA.fullmatch(commit) or not isinstance(attempt, str):
+            return {}
+        try:
+            if git(self.repo, "cat-file", "-t", commit).strip() != "commit":
+                return {}
+            message = git(self.repo, "show", "-s", "--format=%B", commit)
+            parents = git(self.repo, "rev-list", "--parents", "-n", "1", commit).split()[1:]
+            # An EO merge can introduce records from its side branch into the authority ref.
+            comparison = (parents[0], commit) if parents else ("--root", commit)
+            paths = git(self.repo, "diff-tree", *comparison, "--no-commit-id", "--name-only",
+                        "--no-renames", "--diff-filter=A", "-r", "-z",
+                        "--", "results/", "evidence/", "reviews/").split("\x00")
+        except FormalError:
+            return {}
+        if f"Result-Attempt: {attempt}" not in message.splitlines():
+            return {}
+        records = {}
+        for kind, folder, prefix in (("result", "results", "RESULT"), ("evidence", "evidence", "EVD"),
+                                     ("review", "reviews", "REVIEW")):
+            matches = [path for path in paths
+                       if re.fullmatch(rf"{folder}/{prefix}-\d{{8}}-\d+/{kind}\.yaml", path)]
+            if len(matches) == 1:
+                records[kind] = matches[0]
+        return records
+
     def advance(self, binding, *, review=False):
         if not binding.get("authorizedAt") or binding.get("held"):
             return
@@ -458,9 +486,11 @@ class Engineering(Formal):
                     last = accepted[-1]
                     base, predecessor = last["result"]["commit"], last["invocation"]
                 req = self.admit(kernel, binding, task, base, predecessor)
-                runs[key] = {"execution": req["execution_id"], "state": req["state"]}
+                runs[key] = {"request": req["request_id"], "execution": req["execution_id"], "state": req["state"]}
             row = runs[key]
             execution = kernel.get_execution(row["execution"])
+            if request_id := execution.get("request_id") or execution.get("request", {}).get("request_id"):
+                row["request"] = request_id
             if execution["state"] == "DONE" and row.get("state") == "DONE":
                 continue
             if execution["state"] in ("QUEUED", "REVISION_REQUESTED", "RECOVERABLE"):
@@ -492,15 +522,26 @@ class Engineering(Formal):
             attempt = execution["attempts"][-1]
             invocation = attempt["invocation_id"]
             run = self.provider_run(invocation)
-            if row.get("invocation") not in (None, invocation):
+            if row.get("invocation") != invocation:
+                if row.get("decisions") and row.get("result"):
+                    for previous in execution["attempts"][:-1]:
+                        if previous["invocation_id"] != row.get("invocation") or not previous.get("result"):
+                            continue
+                        sealed_commit = previous["result"]["value"]["payload"]["commit"]
+                        if sealed_commit == row["result"].get("commit"):
+                            row["priorDelivery"] = {"invocation": previous["invocation_id"], "commit": sealed_commit}
+                            row["priorDecisions"] = row["decisions"]
+                        break
                 if "failure" in row:
                     row["priorFailure"] = row.pop("failure")
-                for key in ("result", "decisions", "reviewProgress", "eoDelivery", "event", "run", "provider"):
-                    row.pop(key, None)
+                for field in ("result", "decisions", "reviewProgress", "eoDelivery", "eoRecords",
+                              "event", "run", "provider", "providerSession", "providerRule"):
+                    row.pop(field, None)
             row.update(state=execution["state"], invocation=invocation, attempt=attempt["attempt_id"])
             if not run:
                 return
-            row.update(event=run["event_id"], run=run["run_id"], provider=run["state"])
+            row.update(event=run["event_id"], run=run["run_id"], provider=run["state"],
+                       providerSession=run["session"], providerRule=run["rule"])
             if "result" in row and row["result"].get("codex_thread") != run["session"]:
                 row.pop("result")
             if execution["state"] == "QUEUED" and run["session"] and run["claimed_at"]:
@@ -534,10 +575,15 @@ class Engineering(Formal):
                 return
             if "decisions" not in row:
                 progress = row.setdefault("reviewProgress", {})
-                prior = row.get("priorDelivery")
-                if prior:
-                    prior = {**prior, "decisions": {role: item["text"][:500]
-                                                     for role, item in row.get("priorDecisions", {}).items()}}
+                prior = None
+                for previous in reversed(execution["attempts"][:-1]):
+                    if previous["state"] == "COMPLETED" and previous.get("result"):
+                        prior = {"invocation": previous["invocation_id"],
+                                 "commit": previous["result"]["value"]["payload"]["commit"]}
+                        if row.get("priorDelivery") == prior:
+                            prior["decisions"] = {role: item["text"][:500]
+                                                  for role, item in row.get("priorDecisions", {}).items()}
+                        break
                 row["decisions"] = self.judge(binding, execution["request"], invocation, result, progress, prior)
                 row.pop("reviewProgress", None)
                 return
