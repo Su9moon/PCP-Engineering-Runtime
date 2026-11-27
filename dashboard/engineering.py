@@ -239,7 +239,7 @@ class Engineering(Formal):
                     server.terminate()
                     server.wait(timeout=5)
 
-    def judge(self, binding, request, invocation, result):
+    def judge(self, binding, request, invocation, result, progress):
         checkout = worker_path(self.settings["workspaceRoot"], invocation)
         diff = git(checkout, "diff", "--no-ext-diff", result["base"], result["commit"])
         if len(diff) > self.settings["budget"]["reviewChars"]:
@@ -249,10 +249,11 @@ class Engineering(Formal):
                               "base": result["base"], "commit": result["commit"]}, ensure_ascii=False)
         review_cfg = {**self.planner.settings, **self.settings["roles"]["review"]}
         qa_cfg = {**self.planner.settings, **self.settings["roles"]["qa"]}
-        decisions = {}
+        decisions = progress.setdefault("decisions", {})
         # Ruflo 3.80.0 validates each agent_execute prompt at 10,000 UTF-16 units.
         # Divide the full diff into requests and require every section to pass.
-        notes, proofs = [], []
+        notes = progress.setdefault("notes", [])
+        proofs = progress.setdefault("proofs", [])
         sections = []
         remaining = diff
         while remaining:
@@ -266,6 +267,8 @@ class Engineering(Formal):
             sections.append(remaining[:end])
             remaining = remaining[end:]
         for index, section in enumerate(sections, 1):
+            if index <= len(notes):
+                continue
             text, proof = LocalPlanner(review_cfg).request(
                 "你负责独立代码复核的分段取证。只核对本段，给出 CLEAR 或 FINDING。"
                 "只有本段可以复现的具体缺陷或越权才是 FINDING，其他段和最终验收由综合复核检查。"
@@ -279,35 +282,37 @@ class Engineering(Formal):
                 raise FormalError("独立代码复核未返回可核验的分段证据。")
             notes.append((status[1], text[:600]))
             proofs.append(proof)
-        base_data = {"task": task, "commit": result["commit"], "paths": result["changed"],
-                     "checks": result["tests"][:3], "observations": [entry[1] for entry in notes]}
-        text, proof = LocalPlanner(review_cfg).request(
-            "综合下面所有变更分段的复核记录和 Worker 证据，给出独立代码复核决定。"
-            "具体可复现的功能缺陷或越权才退回；以 PASS 或 REWORK 起首后用中文说明。\n"
-            + json.dumps(base_data, ensure_ascii=False),
-            "你是 Ruflo 的独立代码复核角色。对整个候选提交给出复核决定。",
-            max_tokens=500,
-        )
-        status = re.match(r"(PASS|REWORK)(?=$|[\s：:，。*])", text.lstrip("* \n"))
-        if not status:
-            raise FormalError("独立代码复核未返回可核验的决定。")
-        decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
-        live = self.product_readback(checkout) if status[1] == "PASS" else None
-        qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation},
-                   "commit": result["commit"], "paths": result["changed"], "commands": result["tests"][:4],
-                   "response": result["response"][:1600], "productReadback": live}
-        text, proof = LocalPlanner(qa_cfg).request(
-            "你负责独立产品 QA。按 Worker 实际测试及候选提交在真实当前来源上的 HTTPS 产品读回核对验收。"
-            "跨任务后台续接必须在本项通过后由服务实测，不是当前 Worker 可以事先完成的测试。"
-            "区别待下游验证和本次实际缺陷。以 PASS 或 REWORK 起首并用完整中文说明。\n"
-            + json.dumps(qa_data, ensure_ascii=False),
-            "你是 Ruflo 的独立产品 QA，只给出 QA 决定。",
-            max_tokens=500,
-        )
-        status = re.match(r"(PASS|REWORK)(?=$|[\s：:，。*])", text.lstrip("* \n"))
-        if not status:
-            raise FormalError("独立产品 QA 未返回可核验的决定。")
-        decisions["qa"] = {"state": status[1], "text": text[:1800], "receipt": proof, "productReadback": live}
+        if "review" not in decisions:
+            base_data = {"task": task, "commit": result["commit"], "paths": result["changed"],
+                         "checks": result["tests"][:3], "observations": [entry[1] for entry in notes]}
+            text, proof = LocalPlanner(review_cfg).request(
+                "综合下面所有变更分段的复核记录和 Worker 证据，给出独立代码复核决定。"
+                "具体可复现的功能缺陷或越权才退回；以 PASS 或 REWORK 起首后用中文说明。\n"
+                + json.dumps(base_data, ensure_ascii=False),
+                "你是 Ruflo 的独立代码复核角色。对整个候选提交给出复核决定。",
+                max_tokens=500,
+            )
+            status = re.match(r"(PASS|REWORK)(?=$|[\s：:，。*])", text.lstrip("* \n"))
+            if not status:
+                raise FormalError("独立代码复核未返回可核验的决定。")
+            decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
+        if "qa" not in decisions:
+            live = self.product_readback(checkout) if decisions["review"]["state"] == "PASS" else None
+            qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation},
+                       "commit": result["commit"], "paths": result["changed"], "commands": result["tests"][:4],
+                       "response": result["response"][:1600], "productReadback": live}
+            text, proof = LocalPlanner(qa_cfg).request(
+                "你负责独立产品 QA。按 Worker 实际测试及候选提交在真实当前来源上的 HTTPS 产品读回核对验收。"
+                "跨任务后台续接必须在本项通过后由服务实测，不是当前 Worker 可以事先完成的测试。"
+                "区别待下游验证和本次实际缺陷。以 PASS 或 REWORK 起首并用完整中文说明。\n"
+                + json.dumps(qa_data, ensure_ascii=False),
+                "你是 Ruflo 的独立产品 QA，只给出 QA 决定。",
+                max_tokens=500,
+            )
+            status = re.match(r"(PASS|REWORK)(?=$|[\s：:，。*])", text.lstrip("* \n"))
+            if not status:
+                raise FormalError("独立产品 QA 未返回可核验的决定。")
+            decisions["qa"] = {"state": status[1], "text": text[:1800], "receipt": proof, "productReadback": live}
         supervisor, receipt = self.planner.request(
             "根据真实 Worker 提交及独立评审决定下一步。只接受以 CONTINUE 或 REWORK 起首的中文决定。"
             "仅两份通过才能 CONTINUE，后续依赖必须先等本项通过；不扩大范围。\n" +
@@ -416,7 +421,7 @@ class Engineering(Formal):
             if row.get("invocation") not in (None, invocation):
                 if "failure" in row:
                     row["priorFailure"] = row.pop("failure")
-                for key in ("result", "decisions", "eoDelivery", "event", "run", "provider"):
+                for key in ("result", "decisions", "reviewProgress", "eoDelivery", "event", "run", "provider"):
                     row.pop(key, None)
             row.update(state=execution["state"], invocation=invocation, attempt=attempt["attempt_id"])
             if not run:
@@ -454,7 +459,9 @@ class Engineering(Formal):
             if not review:
                 return
             if "decisions" not in row:
-                row["decisions"] = self.judge(binding, execution["request"], invocation, result)
+                progress = row.setdefault("reviewProgress", {})
+                row["decisions"] = self.judge(binding, execution["request"], invocation, result, progress)
+                row.pop("reviewProgress", None)
                 return
             decisions = row["decisions"]
             if not all(decisions[name]["state"] == "PASS" for name in ("review", "qa")) or decisions["supervisor"]["state"] != "CONTINUE":
