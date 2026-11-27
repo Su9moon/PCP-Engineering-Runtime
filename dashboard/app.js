@@ -6,7 +6,7 @@ const labels = {
 };
 const statusLabels = {
   connected: "已连接", disconnected: "未连接", history: "历史记录", unconfigured: "未配置",
-  unverified: "未验证", unavailable: "未暴露", blocked: "阻塞", failed: "失败", deferred: "已延期",
+  unverified: "未验证", unavailable: "不可用", blocked: "阻塞", failed: "失败", deferred: "已延期",
   READY: "待处理", EXECUTING: "执行中", RESULT_READY: "结果待复核", CLOSED: "已归档", RUNNING: "运行中", DONE: "已完成", FAILED: "失败",
   COMPLETED: "已完成", NEEDS_REVIEW: "待复核", BLOCKED: "阻塞", DRAFT: "草稿",
   APPROVED: "已批准", REWORK: "需返工", NEEDS_INPUT: "待补充",
@@ -18,8 +18,10 @@ const gitProject = "https://github.com/Su9moon/PCP-Engineering-Runtime";
 const gitEO = "https://github.com/Su9moon/pcp-engineering-operations";
 const query = {task: "", taskStatus: "", run: "", pool: ""};
 let state;
-let loading = false;
-let requestError = false;
+let stateRequest;
+let failedAt;
+let suspended = false;
+const STATE_TIMEOUT_MS = 15000;
 
 function node(tag, className, ...children) {
   const element = document.createElement(tag);
@@ -61,7 +63,7 @@ function date(value) {
 function status(value) {
   const tone = ["connected", "done", "DONE", "APPROVED", "COMPLETED"].includes(value) ? "done"
     : ["claimed", "running", "active", "RUNNING"].includes(value) ? "running"
-    : ["failed", "FAILED"].includes(value) ? "failed"
+    : ["unavailable", "failed", "FAILED"].includes(value) ? "failed"
     : ["blocked", "BLOCKED", "NEEDS_REVIEW", "NEEDS_INPUT", "REWORK"].includes(value) ? "blocked" : "neutral";
   return node("span", "status " + tone, statusLabels[value] ?? value ?? "未记录");
 }
@@ -157,10 +159,27 @@ function allHealth() {
   return [state.ruflo.health, ...state.hubs.map((hub) => hub.health), state.eo.health, state.es.health, ...state.connections];
 }
 
-function integration(health) {
+function awaitingState() {
+  return Boolean(stateRequest || suspended);
+}
+
+function staleState() {
+  return awaitingState() || Boolean(failedAt);
+}
+
+function observation(availability, observedAt) {
+  return node("div", "", status(staleState() ? "unknown" : (availability ?? "unknown")),
+    awaitingState() ? node("small", "sub", "正在重新观测…") : null,
+    failedAt ? node("small", "sub", "本次读取失败 " + date(failedAt)) : null,
+    observedAt ? node("small", "sub", (staleState() ? "上次观察 " : "观察于 ") + date(observedAt)) : null);
+}
+
+function integration(health, showAvailability = false) {
   return node("div", "integration",
-    node("div", "integration-main", node("b", "", health.label), node("small", "", health.detail)),
-    node("div", "integration-side", status(health.status), node("small", "", "观测 " + date(health.observedAt)), health.sourceAt ? node("small", "", "来源时间 " + date(health.sourceAt)) : null));
+    node("div", "integration-main", node("b", "", health.label),
+      node("small", "", (staleState() ? "上次记录 · " : "") + health.detail)),
+    node("div", "integration-side", observation(showAvailability ? health.availability : health.status, health.observedAt),
+      health.sourceAt ? node("small", "sub", (staleState() ? "上次来源时间 " : "来源时间 ") + date(health.sourceAt)) : null));
 }
 
 function metric(title, value, source) {
@@ -170,8 +189,8 @@ function metric(title, value, source) {
 
 function overview() {
   const tasks = state.eo.tasks;
-  const runnable = allRuns().filter((run) => run.mode === "live" && run.state === "claimed");
-  const liveHub = state.hubs.some((hub) => hub.health.status === "connected");
+  const runnable = state.hubs.flatMap((hub) => hub.workers.flatMap((worker) => worker.activeRuns ?? []));
+  const liveHub = !staleState() && state.hubs.some((hub) => hub.health.availability === "active");
   const recent = allRuns().filter((run) => run.finishedAt || run.claimedAt).sort((a, b) =>
     String(b.finishedAt ?? b.claimedAt).localeCompare(String(a.finishedAt ?? a.claimedAt))).slice(0, 7);
   const taskCount = (values) => state.eo.health.status === "connected" ? tasks.filter((task) => values.includes(task.status)).length : null;
@@ -180,16 +199,16 @@ function overview() {
     node("div", "grid metrics", metric("EO 工单", state.eo.health.status === "connected" ? tasks.length : null, "本地 EO Git"),
       metric("EO 待处理", taskCount(["READY", "PENDING"]), "本地 EO 工单状态"),
       metric("ES 已完成", state.es.health.status === "history" ? state.es.executions.filter((item) => item.state === "DONE").length : null, "现有 ES 记录"),
-      metric("当前已领取 Run", liveHub ? runnable.length : null, liveHub ? "已连接的 Hub 响应" : "无实时 Hub 数据")),
+      metric("活跃 Worker 的已领取 Run", liveHub ? runnable.length : null, liveHub ? "本次 Hub 响应" : "无当前 Hub 响应")),
     node("div", "grid two-col",
       panel("最近执行活动", "按 Provider 的实际记录时间排序",
         recent.length ? node("div", "activity", recent.map((run) => node("div", "activity-item",
           node("div", "timeline-dot"), node("div", "",
             button("Run " + run.id + " · " + run.rule, () => runDetails(run), "link task-link"),
-            node("small", "", run.pool + " · " + (run.mode === "live" ? "在线读取" : "历史记录"))),
+            node("small", "", run.pool + " · " + runSource(run))),
           node("div", "activity-time", date(run.finishedAt ?? run.claimedAt)),
         ))) : node("p", "note", "来源暂未返回实际执行活动。")),
-      panel("来源状态", "实时响应与历史记录分别标记", allHealth().map(integration))),
+      panel("来源状态", "实时响应与历史记录分别标记", allHealth().map((health) => integration(health)))),
   ];
 }
 
@@ -233,12 +252,21 @@ function tasksPage() {
   ];
 }
 
+function runSource(run) {
+  if (run.mode === "snapshot") return "Hub 历史快照";
+  if (run.mode !== "live") return "历史投影";
+  return staleState() ? "上次 Hub 响应" : "本次 Hub 响应";
+}
+
 function runDetails(run) {
   const artifact = run.delivery;
+  const health = state.hubs.find((hub) => hub.health.label === run.pool)?.health;
   popup("Run " + run.id, [
     node("div", "detail-block", node("h3", "", "Autoloop Provider"), entries([
-      ["Hub", run.pool], ["来源", run.mode === "live" ? "在线读取" : "历史记录"],
-      ["状态", status(run.state)], ["Worker", run.worker], ["代理 / 规则", [run.agent, run.rule].filter(Boolean).join(" / ")],
+      ["Hub", run.pool], ["来源", runSource(run)],
+      ["Hub 可用性", observation(health?.availability ?? "unknown", health?.observedAt)],
+      ["Run 记录状态", status(run.state)], ["记录中的 Worker", run.worker],
+      ["代理 / 规则", [run.agent, run.rule].filter(Boolean).join(" / ")],
       ["创建", date(run.createdAt)], ["领取", date(run.claimedAt)], ["完成", date(run.finishedAt)],
       ["Codex Thread / Session", artifact?.thread ?? run.session], ["Worker 退出码", artifact?.exitCode],
       ["结果摘要", run.summary || null], ["失败原因", run.error || null],
@@ -260,15 +288,16 @@ function runsPage() {
     const needle = query.run.trim().toLowerCase();
     const filtered = runs.filter((run) => (!query.pool || run.pool === query.pool)
       && [run.id, run.rule, ...run.events.map((event) => event.id)].join(" ").toLowerCase().includes(needle));
-    container.replaceChildren(table(["Run", "Event ID", "Hub / 来源", "规则", "Provider 状态", "最后活动"], filtered.map((run) =>
+    container.replaceChildren(table(["Run", "Event ID", "Hub / 来源", "规则", "Run 记录状态", "最后活动"], filtered.map((run) =>
       [button("Run " + run.id, () => runDetails(run), "link task-link"), run.events.map((event) => event.id).filter(Number.isInteger).join(", ") || "未暴露",
-        node("div", "", run.pool, node("span", "sub", run.mode === "live" ? "在线读取" : "历史记录")), run.rule,
+        node("div", "", run.pool, node("span", "sub", runSource(run))), run.rule,
         status(run.state), date(run.finishedAt ?? run.claimedAt ?? run.createdAt)]), "没有符合条件的 Autoloop Run。"));
   }
   filter();
   return [
     header("运行记录", "按 Hub 保留原始 Event 和 Run 标识，ES 执行及交付决策分别查看"),
-    panel("Autoloop Run / Event", "历史状态显示来源的最后记录。领取状态需要在线证据才能确认为当前执行。",
+    panel("Hub 可用性", "", state.hubs.map((hub) => integration(hub.health, true))),
+    panel("Autoloop Run / Event", "显示来源返回的 Run 状态与记录时间。",
       node("div", "filters", inputFilter("搜索 Event、Run 或规则", "run", filter),
         selectFilter("全部 Hub", "pool", state.hubs.map((hub) => hub.health.label), filter)), container),
   ];
@@ -295,13 +324,13 @@ function agentsPage() {
 function workersPage() {
   const workers = state.hubs.flatMap((hub) => hub.workers);
   return [
-    header("执行节点", "查看 Autoloop Worker 身份、最近心跳和 Hub 的观测结果"),
+    header("执行节点", "查看 Autoloop Worker 的心跳记录与可用性"),
     node("div", "grid two-col",
-      panel("Worker 节点", "同机执行历史已观测，远程 Worker 未验证。",
-        table(["Worker", "Hub", "最近心跳", "状态", "活动 Run / 执行器"], workers.map((worker) =>
-          [worker.name, worker.pool, date(worker.seenAt), status(worker.online === true ? "connected" : worker.online === false ? "disconnected" : "history"),
-            [...(worker.activeRuns ?? []).map((id) => "Run " + id), ...(worker.executors ?? [])].join(" · ") || "未暴露"]), "来源暂未返回 Worker 记录。")),
-      panel("Hub 连接", "", state.hubs.map((hub) => integration(hub.health)))),
+      panel("Worker 节点", "活跃表示该次 Hub 响应确认了有效心跳。",
+        table(["Worker", "Hub", "最近心跳", "可用性 / 观察时间", "已领取 Run / 执行器"], workers.map((worker) =>
+          [worker.name, worker.pool, date(worker.seenAt), observation(worker.availability, worker.observedAt),
+            [...(staleState() ? [] : (worker.activeRuns ?? [])).map((id) => "Run " + id), ...(worker.executors ?? [])].join(" · ") || "—"]), "来源暂未返回 Worker 记录。")),
+      panel("Hub 连接", "", state.hubs.map((hub) => integration(hub.health, true)))),
     panel("各 Hub 最近执行", "历史运行按来源分组。现有投影未提供逐 Run 的可信 Worker 标识时留空。",
       table(["Run", "Hub", "Provider 代理", "状态", "最近记录"], allRuns().slice(0, 10).map((run) => [
         button("Run " + run.id, () => runDetails(run), "link task-link"), run.pool, run.agent,
@@ -339,8 +368,8 @@ function reviewsPage() {
 
 function connectionsPage() {
   return [
-    header("连接与配置", "最近观测时间与各来源的实际能力"),
-    panel("组件连接", "", allHealth().map(integration)),
+    header("连接与配置", "各来源的可用性及最近观察时间"),
+    panel("组件连接", "", allHealth().map((health) => integration(health, true))),
     panel("写入权限", "", entries([
       ["创建工单", state.actions.create], ["授权及派发", state.actions.dispatch],
       ["Autoloop 操作", state.actions.provider], ["EO / ES 复核", state.actions.review], ["Ruflo 重规划", state.actions.replan],
@@ -368,40 +397,71 @@ function render() {
     return;
   }
   if (!state) {
-    el("view").replaceChildren(node("p", "note", requestError ? "读取失败。请点击刷新重试。" : "正在读取来源记录…"));
+    el("view").replaceChildren(failedAt
+      ? node("div", "note warn", observation("unknown"), node("p", "", "请点击刷新重试。"))
+      : node("p", "note", "正在读取来源记录…"));
     return;
   }
   const content = views[current]();
-  if (requestError) content.unshift(node("p", "note warn", "最新一次读取失败，当前显示上次成功取得的记录。"));
+  if (awaitingState()) content.unshift(node("p", "note", "正在重新观测，保留上次取得的记录。"));
+  else if (failedAt) content.unshift(node("p", "note warn",
+    "本次读取失败 " + date(failedAt) + " · 上次成功读取 " + date(state.observedAt)));
   el("view").replaceChildren(...content);
 }
 
 async function refresh() {
-  if (loading) return;
-  loading = true;
+  if (stateRequest) return;
+  const request = new AbortController();
+  stateRequest = request;
+  suspended = false;
+  failedAt = null;
+  el("freshness").textContent = "正在读取";
   el("refresh").disabled = true;
+  if (el("detail").open) el("detail").close();
+  if (page() !== "intake") render();
+  const timeout = setTimeout(() => request.abort(), STATE_TIMEOUT_MS);
   try {
-    const response = await fetch("/api/state", {cache: "no-store"});
+    const response = await fetch("/api/state", {cache: "no-store", signal: request.signal});
     if (!response.ok) throw new Error("Snapshot HTTP " + response.status);
-    state = await response.json();
-    requestError = false;
-    el("freshness").textContent = "最近读取 " + date(state.observedAt);
+    const snapshot = await response.json();
+    if (stateRequest === request) {
+      state = snapshot;
+      el("freshness").textContent = "最近读取 " + date(state.observedAt);
+    }
   } catch {
-    requestError = true;
-    el("freshness").textContent = "读取失败";
+    if (stateRequest === request) {
+      failedAt = new Date().toISOString();
+      el("freshness").textContent = "读取失败 " + date(failedAt);
+    }
   } finally {
-    loading = false;
-    el("refresh").disabled = false;
-    render();
+    clearTimeout(timeout);
+    if (stateRequest === request) {
+      stateRequest = null;
+      el("refresh").disabled = false;
+      if (el("detail").open) el("detail").close();
+      render();
+    }
   }
 }
 
 el("refresh").addEventListener("click", refresh);
 el("detail-close").addEventListener("click", () => el("detail").close());
+window.addEventListener("pagehide", (event) => {
+  if (!event.persisted) return;
+  suspended = true;
+  stateRequest?.abort();
+  stateRequest = null;
+  failedAt = null;
+  el("freshness").textContent = "等待重新观测";
+  if (el("detail").open) el("detail").close();
+  if (page() !== "intake") render();
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) refresh();
+});
 window.addEventListener("hashchange", () => {
   if (el("detail").open) el("detail").close();
   render();
   window.scrollTo(0, 0);
 });
-render();
 refresh();
