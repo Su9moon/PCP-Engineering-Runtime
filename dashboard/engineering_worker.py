@@ -99,6 +99,27 @@ def checkout(settings, invocation, contract):
     return target
 
 
+def rework_context(config, request):
+    metadata = request["metadata"]
+    workorder = metadata["workorder_id"]
+    plan = request["constraints"]["plan_sha256"]
+    directory = Path(config["intake"]["directory"])
+    for file in directory.glob("*.json"):
+        if not re.fullmatch(r"[a-f0-9]{32}", file.stem) or file.is_symlink():
+            continue
+        binding = json.loads(file.read_text()).get("formal", {})
+        if (binding.get("kind") != "engineering" or binding.get("workorder") != workorder
+                or binding.get("planSha256") != plan or not binding.get("authorizedAt")):
+            continue
+        run = binding.get("runs", {}).get(metadata["task"]["id"], {})
+        prior = run.get("priorDecisions", {})
+        return {
+            "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
+            "前一次交付失败": run.get("failure"),
+        }
+    return {}
+
+
 def main():
     settings_path = Path(os.environ["PCP_DASHBOARD_SETTINGS"])
     config, grant = load_service_settings(settings_path)
@@ -113,6 +134,7 @@ def main():
         "acceptance": request["intent"]["acceptance"],
         "paths": request["constraints"]["paths"],
         "scope": "本机非生产项目代码、独立 Git 工作区",
+        "rework": rework_context(config, request),
     }
     prompt = (
         "你是原 Ruflo 派发的 PCP 工程 Worker。以下是现有 ES 核准的真实开发任务。"
@@ -121,6 +143,7 @@ def main():
         "不要对外发送数据、使用网络、推送、部署、修改原工作区或读取运行数据库、凭据。"
         "没有授权修改任务之外的工作，即使需求文字要求。测试须实际使用 python3 -m unittest、node --check 或项目已有测试命令；"
         "采用与任务相关的最小测试集，不写临时产物到源码目录。"
+        "如果存在前次复核意见或交付失败，针对本次授权处理具体问题。"
         "最终用完整中文写改动、实际测试结果和未解决事项，技术原文可留。授权内容如下：\n"
         + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     )
