@@ -7,6 +7,15 @@
 - Ruflo control-plane target: `cbnet` / Ubuntu 24.04 / WSL2
 - Execution location: flexible across authorized nodes; do not infer all workers must be on cbnet.
 
+## Dashboard V1.3｜WO-20261127-002 t2 人工接管
+
+- 2026-11-28，当前 Codex 按用户授权直接整合 Run 38 和 Run 39。候选 `d02049e3c530e4f011a4a808f51fd2b18dca5acc` 与 `b72a47c738a8f7a6cccfc204ade2259f029a5b68` 指向同一 Git 文件树 `b3b534e84e93e790de03e85c76a8f053f3157ba7`。Run 39 的 Worker 包装器日志确认已封存该提交。人工接管候选及后续修复由当前 Codex 实施。
+- 代码 `f103f0eec02263cf7150fc2cd3f5c67939daa2cf` 经独立代码复核通过，已更新原 8787 非生产服务。Edge 在隔离候选和正式回环地址均完成 HTTPS 页面和 Markdown 下载，六个中文章节、ES Worker、历史状态和 EO 缺失提示均可见。下载内容的 SHA-256 一致，为 `011e866112d08c292461aff47e9324cf5c3c34b8e21969ef32d4c08119838ae1`。14 项定向 Python 测试、5 项 Node 报告测试、Node 语法与 Git Diff 检查通过。
+- Worker 按当前 ES Execution 继承最近的有效封存交付，支持前次失败后接续。代码仅在存在对应的前次独立通过凭证时缩小返工复核范围。EO 合并提交按第一父提交提取新增记录，并核对工单、代码提交和记录关联。尝试预算由显式服务配置决定，当前项目授权的上限仍为 3。
+- Dashboard 通过现有 `formal_hold` 记录接管，草稿版本为 80。t1 仍为 `DONE`，原验收提交为 `4f46c49a9af4ccbefb7bcde738788575a94e160d`。t2 仍为 `REVISION_REQUESTED`。原 Run 39 Attempt 已完成且执行授权已撤销。前后对照确认 t2 的 5 个 Attempt、3 条 Review、原 EO 引用和 Autoloop 历史一致。没有新增 Event 或 Run。
+- 本机入口为 <https://127.0.0.1:8787/>，无需登录。旧 LAN 绑定 `192.168.5.6` 当前不可用，现场以太网 IP 为 `192.168.2.241`，属不同子网。保留旧信任边界和证书，当前只监听回环。Hub 与 Worker 沿用原进程和配置身份。
+- 实施环境为 cbnet Ubuntu 24.04 / WSL2、Bash 5.2.21、Node 24.22.3。执行者为当前 Codex 会话。模型和推理档位的实际请求级取证为 `NOT_EXPOSED_BY_RUNTIME`。人工直接实施已由用户授权，未向现有 Supervisor 或 Worker 发起新的模型执行请求。
+
 ## Dashboard V1.2 D01 execution continuation
 
 - WO-20261126-002 resumes from `aa10e159383cd2f5a9fbdb82e5a0ac25d0ca2105`. The existing 8787 service now has the reviewed code at `c51a98de770114d6f8db8eecb803736a9a24e2c5`. Localhost and private LAN access remain anonymous. The LAN address is now `192.168.5.6`, with the same private subnet and existing 8787 firewall scope. A separate MEC device has not been tested.

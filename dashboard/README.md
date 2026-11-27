@@ -59,3 +59,20 @@ The existing private `dashboard.json` can grant model actions to the local servi
 A formal grant binds the non-production operation to one intake draft. EO writes use the configured branch, immutable template and schema commit, and Git object storage. ES uses the existing ExecutionKernel checkout and SQLite store. The request pins the committed Workorder and the Hub event is keyed by the kernel-issued Invocation. The plan and execution panels show distinct records for formal authorization, the provider receipt and the ES result.
 
 The recovered Autoloop Hub uses its existing database and loopback port. The Worker retains its registered identity and uses a separate recovery directory to avoid automatically resuming the archived Run 28.
+
+## V1.3 中文执行报告与人工接管
+
+打开 **工程任务** 中的已下达计划，在任务行选择 **查看执行报告** 或 **导出执行报告**。页面和 Markdown 含同样的六个中文章节。EO Result、Evidence、Review 按实际关联显示，ES 与 Autoloop 状态、Worker 回执、代码和独立决定分别展示。来源缺失时显示“未记录”。“读取当前报告”只刷新页面数据。
+
+返工由 ES 的当前 Attempt 正式授权。Worker 从同一 Execution 的历史 Attempt 读取最近一份已封存结果，再验证其提交属于授权基线。Dashboard 草稿的前次复核内容仅在身份匹配时附加。配置 `budget.attempts` 是显式资源上限。未配置上限时，继续沿用现有的 ES 授权和 Reviewer／Supervisor 决定。经现有服务端机制登记的单次例外绑定到确切 Request 与上一 Invocation，也可用于 `RECOVERABLE` 状态。原 t2 仍暂停后续调度，接管不生成 EO 验收或 ES 完成记录。
+
+### cbnet 现有服务
+
+- 本机免登录入口为 <https://127.0.0.1:8787/>。2026-11-28，隔离候选和 8787 均通过 Edge TLS 1.3 实测，报告导出内容一致。
+- `pcp-dashboard-v1.service` 与 `pcp-dashboard-engineering.service` 通过同名用户级 `30-v13-t2-codex.conf` 从新的隔离工作树加载。原 `pcp-dashboard-engineering.path` 仍监听原有草稿和 Hub 变化。Dashboard 私有配置和现有 Hub 规则中的程序路径及 SHA-256 指向新 Worker 副本，原 Codex CLI 路由参数照用。Hub 与 Worker 进程原样运行。
+- 核对现状可运行 `systemctl --user status pcp-dashboard-v1.service pcp-dashboard-engineering.path pcp-autoloop-hub.service pcp-autoloop-worker.service`。回退本次部署使用现场 QA 目录中 `deploy/activate.sh rollback`，它恢复两个私有配置和原服务入口。QA 目录由本工单状态目录中的 `codex-t2-https.path` 记录。
+- 现有可信 LAN 的 `192.168.5.6` 不再分配给当前接口。当前地址 `192.168.2.241` 在不同子网上。恢复原网络即可沿用已配置的监听和证书。若迁到当前网络，需要确认可信子网、更新 TLS SAN 和现有 Windows 入站限制，再做独立设备验证。
+
+### 原 t2 正式状态
+
+代码接管和独立候选复核已完成。原 t2 为 `REVISION_REQUESTED`，Run 39 对应的 Attempt 已完成，授权已撤销。ES 的 `record_review` 要求现行 `REVIEW_READY`，当前接口也没有把人工提交登记为该既有 Worker 结果的操作。要完成原工单的正式验收，需要 EO/ES 支持记录人工接管的真实交付，或经现有 ES 授权由实际执行者提交新的合规结果，再走独立验收及 EO 正式回写。
