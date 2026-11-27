@@ -130,6 +130,7 @@ def rework_context(config, request):
         if (delivery and recovery.get("requestId") == f"REQ-{workorder}-{metadata['task']['id']}"
                 and delivery["invocation"] == recovery.get("afterInvocation")):
             guidance = recovery["instruction"]
+            delivery = {**delivery, "preserveTree": recovery.get("preserveTree") is True}
         return {
             "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
             "前一次交付失败": run.get("priorFailure", run.get("failure")),
@@ -201,6 +202,9 @@ def main():
         checked_git(target, "diff", "--cached", "--check")
         checked_git(target, "commit", "-m", "实现已确认的 PCP 工程任务 " + request["metadata"]["task"]["id"])
     commit = checked_git(target, "rev-parse", "HEAD")
+    if prior and prior.get("preserveTree"):
+        if checked_git(target, "rev-parse", "HEAD^{tree}") != checked_git(target, "rev-parse", prior["commit"] + "^{tree}"):
+            raise WorkerError("本次仅授权对原封存文件树复验，提交内容发生变更。")
     print(json.dumps({"type":"pcp.commit.archived","commit":commit}, ensure_ascii=False), flush=True)
     return 0
 
