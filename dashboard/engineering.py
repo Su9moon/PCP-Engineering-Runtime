@@ -204,14 +204,31 @@ class Engineering(Formal):
                 "requested_model": self.settings["model"], "requested_effort": self.settings["effort"],
                 **inspect_codex_context(self.settings.get("codexProfile"), run["session"]), "usage": usage}
 
-    def product_readback(self, checkout, commit):
+    def product_readback(self, checkout, commit, workorder):
         cfg = json.loads(Path(self.settings["qaConfig"]).read_text())
         snapshot = {key: cfg[key] for key in ("sources", "tls")}
         snapshot["port"] = 0
         snapshot["sources"]["eo_ref"] = self.ref
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "dashboard.json"
+            directory = Path(directory)
+            path = directory / "dashboard.json"
+            draft_id = None
+            for file in Path(cfg["intake"]["directory"]).glob("*.json"):
+                if not re.fullmatch(r"[a-f0-9]{32}", file.stem) or file.is_symlink():
+                    continue
+                draft = json.loads(file.read_text())
+                if draft.get("formal", {}).get("workorder") == workorder:
+                    draft_id = file.stem
+                    copy = directory / "drafts"
+                    copy.mkdir(mode=0o700)
+                    (copy / file.name).write_text(json.dumps(draft))
+                    snapshot["intake"] = {"directory": str(copy), "pcp_repo": cfg["intake"]["pcp_repo"]}
+                    snapshot["operator"] = {"project": PROJECT, "actions": [], "engineering": {
+                        key: self.settings[key] for key in ("eoRepo", "eoRef", "eoBase")
+                    }}
+                    break
             path.write_text(json.dumps(snapshot))
+            path.chmod(0o600)
             with subprocess.Popen(
                 ["/usr/bin/python3", "-B", str(checkout / "dashboard/serve.py"), "--config", str(path)],
                 cwd=checkout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
@@ -246,8 +263,23 @@ class Engineering(Formal):
                                 anonymous[name] = deployed.status
                         except OSError:
                             anonymous[name] = "读取失败"
+                    formal_readback = None
+                    if draft_id:
+                        with client.open(url + "/intake.js", timeout=12) as script:
+                            intake = script.read(1_000_000)
+                            sealed = git(checkout, "show", f"{commit}:dashboard/intake.js").encode()
+                            if intake != sealed:
+                                raise FormalError("工程报告预览未返回封存的页面脚本。")
+                        with client.open(url + "/api/intake/" + draft_id, timeout=12) as preview:
+                            record = json.load(preview)["draft"]["formal"]
+                            formal_readback = {
+                                "http": preview.status, "workorder": record["workorder"],
+                                "tasks": {name: {"state": row["state"], "commit": row.get("result", {}).get("commit"),
+                                                 "eoRecords": row.get("eoRecords", {})}
+                                          for name, row in record["runs"].items()},
+                            }
                     return {
-                        "candidateCommit": commit, "scriptSha256": digest, "existingAnonymousHttp": anonymous,
+                        "candidateCommit": commit, "formalDraftReadback": formal_readback, "scriptSha256": digest, "existingAnonymousHttp": anonymous,
                         "pageHttp": page.status, "snapshotHttp": response.status, "freshClientHttp": new_response.status,
                         "reopenedObservedAt": new_data["observedAt"],
                         "chinesePage": b'lang="zh-CN"' in html, "observedAt": data["observedAt"],
@@ -327,7 +359,7 @@ class Engineering(Formal):
                 raise FormalError("独立代码复核未返回可核验的决定。")
             decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
         if "qa" not in decisions:
-            live = self.product_readback(checkout, result["commit"]) if decisions["review"]["state"] == "PASS" else None
+            live = self.product_readback(checkout, result["commit"], binding["workorder"]) if decisions["review"]["state"] == "PASS" else None
             recovery = self.settings.get("approvedRecovery", {})
             if live and prior and not diff and recovery.get("productProof"):
                 proof = json.loads(Path(recovery["productProof"]).read_text())
