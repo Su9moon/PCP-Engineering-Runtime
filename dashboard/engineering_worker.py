@@ -126,7 +126,7 @@ def rework_context(config, request):
         prior = run.get("priorDecisions", {})
         return {
             "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
-            "前一次交付失败": run.get("failure"),
+            "前一次交付失败": run.get("priorFailure", run.get("failure")),
         }, run.get("priorDelivery") if prior else None
     return {}, None
 

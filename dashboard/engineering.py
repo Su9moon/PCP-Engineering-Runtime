@@ -209,7 +209,8 @@ class Engineering(Formal):
                         "workerPresence": [{key: item.get(key) for key in ("name", "availability", "observedAt")}
                                            for hub in data["hubs"] for item in hub["workers"]],
                         "liveRunStates": [{"id": item["id"], "state": item["state"], "observedAt": item.get("observedAt")}
-                                          for hub in data["hubs"] for item in hub["runs"][:5]],
+                                          for hub in data["hubs"] for item in hub["runs"][:5]
+                                          if item.get("mode") == "live"],
                     }
                 finally:
                     server.terminate()
@@ -270,7 +271,7 @@ class Engineering(Formal):
         decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
         live = self.product_readback(checkout) if status[1] == "PASS" else None
         qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation},
-                   "commit": result["commit"], "paths": result["changed"], "commands": result["tests"],
+                   "commit": result["commit"], "paths": result["changed"], "commands": result["tests"][:4],
                    "response": result["response"][:1600], "productReadback": live}
         text, proof = LocalPlanner(qa_cfg).request(
             "你负责独立产品 QA。按 Worker 实际测试及候选提交在真实当前来源上的 HTTPS 产品读回核对验收。"
@@ -389,10 +390,17 @@ class Engineering(Formal):
             attempt = execution["attempts"][-1]
             invocation = attempt["invocation_id"]
             run = self.provider_run(invocation)
+            if row.get("invocation") not in (None, invocation):
+                if "failure" in row:
+                    row["priorFailure"] = row.pop("failure")
+                for key in ("result", "decisions", "eoDelivery", "event", "run", "provider"):
+                    row.pop(key, None)
             row.update(state=execution["state"], invocation=invocation, attempt=attempt["attempt_id"])
             if not run:
                 return
             row.update(event=run["event_id"], run=run["run_id"], provider=run["state"])
+            if "result" in row and row["result"].get("codex_thread") != run["session"]:
+                row.pop("result")
             if execution["state"] == "QUEUED" and run["session"] and run["claimed_at"]:
                 kernel.record_attempt_start(attempt["authority_id"], invocation + "-start", f"autoloop:run:{run['run_id']}")
                 execution = kernel.get_execution(row["execution"])
