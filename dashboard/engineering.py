@@ -255,7 +255,9 @@ class Engineering(Formal):
                                         for item in data["connections"]],
                         "workerPresence": [{key: item.get(key) for key in ("name", "availability", "observedAt")}
                                            for hub in data["hubs"] for item in hub["workers"]],
-                        "liveRunStates": [{"id": item["id"], "state": item["state"], "observedAt": item.get("observedAt")}
+                        "liveRunStates": [{"id": item["id"], "state": item["state"],
+                                           "hubObservedAt": hub["health"]["observedAt"],
+                                           "dashboardReadAt": data["observedAt"]}
                                           for hub in data["hubs"] for item in hub["runs"][:5]
                                           if item.get("mode") == "live"],
                     }
@@ -326,6 +328,11 @@ class Engineering(Formal):
             decisions["review"] = {"state": status[1], "text": text[:2000], "receipt": proof, "sections": proofs}
         if "qa" not in decisions:
             live = self.product_readback(checkout, result["commit"]) if decisions["review"]["state"] == "PASS" else None
+            recovery = self.settings.get("approvedRecovery", {})
+            if live and prior and not diff and recovery.get("productProof"):
+                proof = json.loads(Path(recovery["productProof"]).read_text())
+                if proof.get("commit") == start and proof.get("tlsVerified") is True:
+                    live["sameTreeRunView"] = proof["view"]
             native = self.provider_run(invocation)
             qa_data = {"task": task, "run": {"worker": self.settings["worker"], "invocation": invocation,
                                             "id": native["run_id"], "event": native["event_id"],
@@ -338,6 +345,7 @@ class Engineering(Formal):
                 "跨任务后台续接必须在本项通过后由服务实测，不是当前 Worker 可以事先完成的测试。"
                 "在独立工作区已封存的候选提交执行 HTTPS 读回，生产发布仍待正式验收。"
                 "页面兼容性采用本轮实际 Node 回归证明，不要求未登记的浏览器版本。"
+                "Run 记录的观察时间来自所属 Hub；不要把 Run 历史活动时间当成本次读取时间。"
                 "区别待下游验证和本次实际缺陷。以 PASS 或 REWORK 起首并用完整中文说明。\n"
                 + json.dumps(qa_data, ensure_ascii=False),
                 "你是 Ruflo 的独立产品 QA，只给出 QA 决定。",
