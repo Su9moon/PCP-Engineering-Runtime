@@ -141,6 +141,12 @@ class Engineering(Formal):
         self.verify_routing()
         prior = execution["attempts"]
         limit = self.settings["budget"]["attempts"]
+        recovery = self.settings.get("approvedRecovery", {})
+        if (execution["state"] == "REVISION_REQUESTED" and len(prior) == limit
+                and execution["request_id"] == recovery.get("requestId")
+                and prior[-1]["invocation_id"] == recovery.get("afterInvocation")
+                and recovery.get("supervisorReceipt")):
+            limit += 1
         if execution["state"] in ("RECOVERABLE", "REVISION_REQUESTED") and len(prior) >= limit:
             raise FormalError("该任务已达到服务端授权的尝试预算。")
         if not prior or execution["state"] in ("RECOVERABLE", "REVISION_REQUESTED"):

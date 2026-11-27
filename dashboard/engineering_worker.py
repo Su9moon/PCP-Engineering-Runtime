@@ -124,10 +124,17 @@ def rework_context(config, request):
             continue
         run = binding.get("runs", {}).get(metadata["task"]["id"], {})
         prior = run.get("priorDecisions", {})
+        delivery = run.get("priorDelivery") if prior else None
+        recovery = config["operator"]["engineering"].get("approvedRecovery", {})
+        guidance = ""
+        if (delivery and recovery.get("requestId") == f"REQ-{workorder}-{metadata['task']['id']}"
+                and delivery["invocation"] == recovery.get("afterInvocation")):
+            guidance = recovery["instruction"]
         return {
             "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
             "前一次交付失败": run.get("priorFailure", run.get("failure")),
-        }, run.get("priorDelivery") if prior else None
+            "Supervisor 本次确认的返工范围": guidance,
+        }, delivery
     return {}, None
 
 
@@ -157,6 +164,7 @@ def main():
         "采用与任务相关的最小测试集，不写临时产物到源码目录。"
         "如果存在前次复核意见或交付失败，针对本次授权处理具体问题。"
         "工作区可能包含已装载的前次封存变更，应保留其中已通过的部分。"
+        "存在 Supervisor 本次返工范围时按其处理，先前空缺环境条件交由独立 QA。"
         "最终用完整中文写改动、实际测试结果和未解决事项，技术原文可留。授权内容如下：\n"
         + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     )
