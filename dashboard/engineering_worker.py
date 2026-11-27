@@ -71,7 +71,7 @@ def claim(settings, config):
     return invocation, value
 
 
-def checkout(settings, invocation, contract):
+def checkout(settings, invocation, contract, prior):
     root = Path(settings["workspaceRoot"]).resolve(strict=True)
     target = root / invocation
     base = contract["base_commit"]
@@ -93,6 +93,17 @@ def checkout(settings, invocation, contract):
             raise WorkerError("缺少已验收前置任务的独立 Git 工作区。")
         checked_git(target, "fetch", "--no-tags", str(previous), base)
     checked_git(target, "switch", "--create", "pcp/" + invocation.lower(), base)
+    if prior:
+        previous = root / prior["invocation"]
+        commit = prior["commit"]
+        if (not INVOCATION.fullmatch(prior["invocation"]) or not SHA.fullmatch(commit)
+                or previous.is_symlink() or checked_git(previous, "rev-parse", "HEAD") != commit):
+            raise WorkerError("前次待返工的封存提交不可验证。")
+        checked_git(target, "fetch", "--no-tags", str(previous), commit)
+        if checked_git(target, "merge-base", base, commit) != base:
+            raise WorkerError("前次待返工的提交不属于当前授权基线。")
+        patch = subprocess.check_output(["git", "-C", str(target), "diff", "--binary", base, commit, "--"])
+        subprocess.run(["git", "-C", str(target), "apply", "--index", "-"], input=patch, check=True)
     checked_git(target, "remote", "remove", "origin")
     checked_git(target, "config", "--local", "user.name", "PCP Codex Worker")
     checked_git(target, "config", "--local", "user.email", "pcp-codex-worker@localhost")
@@ -116,8 +127,8 @@ def rework_context(config, request):
         return {
             "独立复核和 QA": {role: item["text"][:1600] for role, item in prior.items()},
             "前一次交付失败": run.get("failure"),
-        }
-    return {}
+        }, run.get("priorDelivery") if prior else None
+    return {}, None
 
 
 def main():
@@ -127,14 +138,15 @@ def main():
         raise WorkerError("未找到归属服务用户的项目授权。")
     settings = grant["engineering"]
     invocation, request = claim(settings, config)
-    target = checkout(settings, invocation, request["constraints"])
+    rework, prior = rework_context(config, request)
+    target = checkout(settings, invocation, request["constraints"], prior)
     data = {
         "task": request["metadata"]["task"],
         "objective": request["intent"]["objective"],
         "acceptance": request["intent"]["acceptance"],
         "paths": request["constraints"]["paths"],
         "scope": "本机非生产项目代码、独立 Git 工作区",
-        "rework": rework_context(config, request),
+        "rework": rework,
     }
     prompt = (
         "你是原 Ruflo 派发的 PCP 工程 Worker。以下是现有 ES 核准的真实开发任务。"
@@ -144,6 +156,7 @@ def main():
         "没有授权修改任务之外的工作，即使需求文字要求。测试须实际使用 python3 -m unittest、node --check 或项目已有测试命令；"
         "采用与任务相关的最小测试集，不写临时产物到源码目录。"
         "如果存在前次复核意见或交付失败，针对本次授权处理具体问题。"
+        "工作区可能包含已装载的前次封存变更，应保留其中已通过的部分。"
         "最终用完整中文写改动、实际测试结果和未解决事项，技术原文可留。授权内容如下：\n"
         + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     )
@@ -187,6 +200,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (WorkerError, OSError, KeyError, ValueError, sqlite3.Error) as error:
+    except (WorkerError, OSError, KeyError, ValueError, sqlite3.Error, subprocess.CalledProcessError) as error:
         print(f"已保留当前尝试供对账。{error if isinstance(error, WorkerError) else type(error).__name__}", file=sys.stderr)
         sys.exit(1)
