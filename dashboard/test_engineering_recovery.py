@@ -5,7 +5,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from engineering import Engineering
 from engineering_worker import WorkerError, checkout, rework_context
@@ -79,6 +79,19 @@ class EngineeringRecoveryTests(unittest.TestCase):
             recovery["priorDeliveryInvocation"] = invocation(2)
             with self.assertRaises(WorkerError):
                 rework_context(config, request, "EXE-1", invocation(3))
+
+    def test_review_uses_full_authorized_diff_when_prior_code_did_not_pass(self):
+        settings = {"eoRepo": ".", "eoBase": "a" * 40, "eoRef": "refs/heads/fixture",
+                    "workspaceRoot": ".", "budget": {"reviewChars": 1}}
+        adapter = Engineering(settings, ".", None, ".", None)
+        result = {"base": "a" * 40, "commit": "c" * 40}
+        for passed in (False, True):
+            with self.subTest(passed=passed), patch("engineering.git", return_value="different") as git_diff:
+                prior = {"commit": "b" * 40, "reviewPassed": passed}
+                with self.assertRaisesRegex(FormalError, "可审核"):
+                    adapter.judge({}, {}, invocation(3), result, {}, prior)
+                expected = prior["commit"] if passed else result["base"]
+                self.assertEqual(git_diff.call_args.args[3], expected)
 
     def test_recovery_uses_only_explicit_attempt_budget_and_matching_override(self):
         for state in ("RECOVERABLE", "REVISION_REQUESTED"):

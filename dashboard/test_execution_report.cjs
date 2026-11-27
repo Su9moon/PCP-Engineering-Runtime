@@ -58,7 +58,7 @@ test("engineering report and download cite the same task and authoritative refer
   const {context, downloads} = renderFixture();
   const view = context.engineeringExecution(draft({t1: {state: "DONE", event: 47}, t2: {
     request: "REQ-2", execution: "EXE-2", attempt: "ATT-2", invocation: "AINV-2", state: "DONE",
-    event: 50, run: 49, provider: "done", providerRule: "engineering",
+    event: 50, run: 49, provider: "done", providerRule: "engineering", worker: "worker-2",
     eoDelivery: deliveryCommit, eoRecords: {result: "results/RESULT-20261127-002/result.yaml",
       evidence: "evidence/EVD-20261127-002/evidence.yaml", review: "reviews/REVIEW-20261127-002/review.yaml"},
     result: {commit: codeCommit, worker_sha256: proof, codex_thread: "thread-2",
@@ -79,7 +79,7 @@ test("engineering report and download cite the same task and authoritative refer
     eoRepo + "@" + deliveryCommit + ":results/RESULT-20261127-002/result.yaml",
     eoRepo + "@" + deliveryCommit + ":evidence/EVD-20261127-002/evidence.yaml",
     eoRepo + "@" + deliveryCommit + ":reviews/REVIEW-20261127-002/review.yaml",
-    "REQ-2", "EXE-2", "ATT-2", "AINV-2", "thread-2", "autoloop:run:49/stdout#sha256=" + proof,
+    "REQ-2", "EXE-2", "ATT-2", "AINV-2", "thread-2", "worker-2", "autoloop:run:49/stdout#sha256=" + proof,
     project + "@" + codeCommit, "python3 -m unittest test_report", "node --check intake.js",
     "resp-review", "resp-qa", "resp-supervisor", "通过（PASS）", "同意继续（CONTINUE）",
   ]) {

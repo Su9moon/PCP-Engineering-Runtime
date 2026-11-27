@@ -1,10 +1,12 @@
 """Project-scoped bridge between confirmed drafts and the existing EO, ES and Autoloop stores."""
+from contextlib import closing
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 import select
+import sqlite3
 import ssl
 import subprocess
 import tempfile
@@ -14,7 +16,7 @@ import yaml
 
 from formal import Formal, FormalError, git, plan_digest, read_object, validate_record
 from planning import LocalPlanner
-from sources import PROJECT, now
+from sources import PROJECT, database, now
 
 CJK = re.compile(r"[㐀-鿿]")
 SHA = re.compile(r"[a-f0-9]{40}")
@@ -301,7 +303,7 @@ class Engineering(Formal):
 
     def judge(self, binding, request, invocation, result, progress, prior):
         checkout = worker_path(self.settings["workspaceRoot"], invocation)
-        previous = prior.get("commit") if prior else None
+        previous = prior["commit"] if prior and prior.get("reviewPassed") else None
         start = previous if previous and SHA.fullmatch(previous) else result["base"]
         diff = git(checkout, "diff", "--no-ext-diff", start, result["commit"])
         if len(diff) > self.settings["budget"]["reviewChars"]:
@@ -440,8 +442,23 @@ class Engineering(Formal):
             files[f"{folders[kind]}/{refs[kind]}/{kind}.yaml"] = yaml.safe_dump(record, allow_unicode=True, sort_keys=False).encode()
         return self.commit_records(head, files, f"登记工程任务验收 {task}\n\n{marker}\n")
 
-    def delivery_records(self, commit, attempt):
-        if not isinstance(commit, str) or not SHA.fullmatch(commit) or not isinstance(attempt, str):
+    def report_worker(self, run):
+        if not all(isinstance(run.get(name), str) for name in ("execution", "attempt", "invocation")):
+            return None
+        try:
+            with closing(database(self.database)) as db:
+                row = db.execute(
+                    "SELECT participant_id FROM attempts WHERE execution_id = ? AND attempt_id = ? AND invocation_id = ?",
+                    (run["execution"], run["attempt"], run["invocation"]),
+                ).fetchone()
+        except (OSError, sqlite3.Error):
+            return None
+        return row["participant_id"] if row else None
+
+    def delivery_records(self, commit, attempt, workorder, code_commit):
+        if (not isinstance(commit, str) or not SHA.fullmatch(commit) or not isinstance(attempt, str)
+                or not isinstance(workorder, str) or not isinstance(code_commit, str)
+                or not SHA.fullmatch(code_commit)):
             return {}
         try:
             if git(self.repo, "cat-file", "-t", commit).strip() != "commit":
@@ -457,14 +474,38 @@ class Engineering(Formal):
             return {}
         if f"Result-Attempt: {attempt}" not in message.splitlines():
             return {}
-        records = {}
+        records = {"result": {}, "evidence": {}, "review": {}}
         for kind, folder, prefix in (("result", "results", "RESULT"), ("evidence", "evidence", "EVD"),
                                      ("review", "reviews", "REVIEW")):
-            matches = [path for path in paths
-                       if re.fullmatch(rf"{folder}/{prefix}-\d{{8}}-\d+/{kind}\.yaml", path)]
-            if len(matches) == 1:
-                records[kind] = matches[0]
-        return records
+            for path in paths:
+                match = re.fullmatch(rf"{folder}/({prefix}-\d{{8}}-\d+)/{kind}\.yaml", path)
+                if not match:
+                    continue
+                try:
+                    record = read_object(self.repo, commit, path)
+                except (FormalError, yaml.YAMLError):
+                    continue
+                if isinstance(record, dict) and record.get(f"{kind}_id") == match[1]:
+                    records[kind][match[1]] = (path, record)
+        selected = []
+        for result_id, (path, result) in records["result"].items():
+            refs = result.get("evidence_refs")
+            if result.get("workorder_id") != workorder or not isinstance(refs, list):
+                continue
+            for evidence_id, (evidence_path, evidence) in records["evidence"].items():
+                locator = evidence.get("locator")
+                if (evidence_id in refs and isinstance(locator, dict) and locator.get("kind") == "git_commit"
+                        and locator.get("revision") == code_commit):
+                    selected.append((result_id, path, evidence_path))
+        if len(selected) != 1:
+            return {}
+        result_id, path, evidence_path = selected[0]
+        found = {"result": path, "evidence": evidence_path}
+        reviews = [review_path for review_path, review in records["review"].values()
+                   if review.get("result_id") == result_id]
+        if len(reviews) == 1:
+            found["review"] = reviews[0]
+        return found
 
     def advance(self, binding, *, review=False):
         if not binding.get("authorizedAt") or binding.get("held"):
@@ -581,8 +622,10 @@ class Engineering(Formal):
                         prior = {"invocation": previous["invocation_id"],
                                  "commit": previous["result"]["value"]["payload"]["commit"]}
                         if row.get("priorDelivery") == prior:
-                            prior["decisions"] = {role: item["text"][:500]
-                                                  for role, item in row.get("priorDecisions", {}).items()}
+                            previous_decisions = row.get("priorDecisions", {})
+                            prior["decisions"] = {role: item["text"][:500] for role, item in previous_decisions.items()}
+                            review = previous_decisions.get("review", {})
+                            prior["reviewPassed"] = review.get("state") == "PASS" and bool(review.get("receipt"))
                         break
                 row["decisions"] = self.judge(binding, execution["request"], invocation, result, progress, prior)
                 row.pop("reviewProgress", None)

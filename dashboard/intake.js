@@ -307,7 +307,7 @@ function executionReport(draft, run, state, expanded, task) {
     ["Autoloop 与 Worker 回执", [
       ["Autoloop Event", run.event], ["Autoloop Run", run.run], ["Autoloop 规则", run.providerRule],
       ["Autoloop 状态", reportedState(providerReportStates, run.provider)],
-      ["Codex 会话", run.providerSession ?? result?.codex_thread],
+      ["执行 Worker", run.worker], ["Codex 会话", run.providerSession ?? result?.codex_thread],
       ["Worker 日志引用", logRef], ["Worker 交付原文", result?.response],
     ]],
     ["代码与测试", [["Git 提交", reportGitRef(projectRepo, result?.commit)],

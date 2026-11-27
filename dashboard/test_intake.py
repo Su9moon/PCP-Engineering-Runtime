@@ -1,5 +1,7 @@
 """Focused tests for durable, authority-aware conversational intake."""
+import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -28,6 +30,19 @@ def repo(root, files):
     git(root, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
         "commit", "-qm", "fixture")
     return git(root, "rev-parse", "HEAD")
+
+
+def write_delivery(root, paths, workorder, commit):
+    ids = {kind: Path(path).parent.name for kind, path in paths.items()}
+    values = {
+        "result": {"result_id": ids["result"], "workorder_id": workorder, "evidence_refs": [ids["evidence"]]},
+        "evidence": {"evidence_id": ids["evidence"], "locator": {"kind": "git_commit", "revision": commit}},
+        "review": {"review_id": ids["review"], "result_id": ids["result"]},
+    }
+    for kind, path in paths.items():
+        file = root / path
+        file.parent.mkdir(parents=True)
+        file.write_text(json.dumps(values[kind]), encoding="utf-8")
 
 
 class IntakeTests(unittest.TestCase):
@@ -84,35 +99,44 @@ class IntakeTests(unittest.TestCase):
                    "review": "reviews/REVIEW-20261127-001/review.yaml"}
         eo = self.root / "formal-eo"
         base = repo(eo, {"README.md": "fixture"})
-        for path in records.values():
-            file = eo / path
-            file.parent.mkdir(parents=True)
-            file.write_text("fixture\n", encoding="utf-8")
+        workorder, code = "WO-20261127-002", "c" * 40
+        write_delivery(eo, records, workorder, code)
         git(eo, "add", ".")
         git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
             "commit", "-qm", "Fixture delivery", "-m", "Result-Attempt: ATT-1")
         delivery = git(eo, "rev-parse", "HEAD")
         draft = self.create("交付报告")
-        runs = {"t1": {"attempt": "ATT-1", "state": "DONE", "eoDelivery": delivery},
-                "t2": {"attempt": "ATT-10", "state": "REVIEW_READY", "eoDelivery": delivery}}
-        draft["formal"] = {"kind": "engineering", "runs": runs}
+        runs = {"t1": {"execution": "EXE-1", "attempt": "ATT-1", "invocation": "AINV-1",
+                       "state": "DONE", "eoDelivery": delivery, "result": {"commit": code}},
+                "t2": {"execution": "EXE-2", "attempt": "ATT-10", "invocation": "AINV-2",
+                       "state": "REVIEW_READY", "eoDelivery": delivery, "result": {"commit": code}}}
+        draft["formal"] = {"kind": "engineering", "workorder": workorder, "runs": runs}
         self.intake.save(draft)
+        database = self.root / "report-es.sqlite"
+        with sqlite3.connect(database) as db:
+            db.execute("CREATE TABLE attempts (execution_id, attempt_id, invocation_id, participant_id)")
+            db.executemany("INSERT INTO attempts VALUES (?,?,?,?)", [
+                ("EXE-1", "ATT-1", "AINV-1", "worker-t1"),
+                ("EXE-2", "ATT-10", "AINV-old", "worker-stale"),
+            ])
         self.intake.formal = Engineering({"eoRepo": eo, "eoBase": base, "eoRef": "refs/heads/fixture"},
-                                        self.root / "unused", None, self.runtime, None)
+                                        database, None, self.runtime, None)
 
         view = self.intake.read(draft["id"])["draft"]["formal"]["runs"]
         self.assertEqual(view["t1"]["eoRecords"], records)
         self.assertEqual(view["t2"]["eoRecords"], {})
+        self.assertEqual(view["t1"]["worker"], "worker-t1")
+        self.assertNotIn("worker", view["t2"])
         self.assertEqual(self.intake.load(draft["id"])["formal"]["runs"], runs)
         blob = git(eo, "hash-object", str(eo / next(iter(records.values()))))
-        self.assertEqual(self.intake.formal.delivery_records(blob, "ATT-1"), {})
+        self.assertEqual(self.intake.formal.delivery_records(blob, "ATT-1", workorder, code), {})
 
         (eo / next(iter(records.values()))).write_text("updated\n", encoding="utf-8")
         git(eo, "add", ".")
         git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
             "commit", "-qm", "Updated delivery", "-m", "Result-Attempt: ATT-1")
         updated = git(eo, "rev-parse", "HEAD")
-        self.assertEqual(self.intake.formal.delivery_records(updated, "ATT-1"), {})
+        self.assertEqual(self.intake.formal.delivery_records(updated, "ATT-1", workorder, code), {})
 
     def test_report_finds_eo_records_added_by_merge_commit(self):
         records = {"result": "results/RESULT-20261127-002/result.yaml",
@@ -126,10 +150,10 @@ class IntakeTests(unittest.TestCase):
         git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
             "commit", "-qm", "left")
         git(eo, "checkout", "-qb", "right", base)
-        for path in records.values():
-            file = eo / path
-            file.parent.mkdir(parents=True)
-            file.write_text("fixture\n", encoding="utf-8")
+        workorder, code = "WO-20261127-002", "c" * 40
+        write_delivery(eo, records, workorder, code)
+        unrelated = {kind: path.replace("20261127-002", "20261127-003") for kind, path in records.items()}
+        write_delivery(eo, unrelated, workorder, "d" * 40)
         git(eo, "add", "results", "evidence", "reviews")
         git(eo, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
             "commit", "-qm", "Create delivery records")
@@ -140,7 +164,7 @@ class IntakeTests(unittest.TestCase):
         self.intake.formal = Engineering({"eoRepo": eo, "eoBase": base, "eoRef": "refs/heads/fixture"},
                                          self.root / "unused", None, self.runtime, None)
 
-        self.assertEqual(self.intake.formal.delivery_records(delivery, "ATT-1"), records)
+        self.assertEqual(self.intake.formal.delivery_records(delivery, "ATT-1", workorder, code), records)
 
     def test_execution_report_fields_follow_the_current_invocation(self):
         engineering = Engineering({"eoRepo": self.eo, "eoBase": "a" * 40, "eoRef": "refs/heads/fixture"},

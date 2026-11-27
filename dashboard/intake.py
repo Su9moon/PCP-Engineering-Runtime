@@ -241,8 +241,13 @@ class Intake:
         binding = draft.get("formal") or {}
         if binding.get("kind") == "engineering" and isinstance(self.formal, Engineering):
             for run in binding["runs"].values():
+                if worker := self.formal.report_worker(run):
+                    run["worker"] = worker
                 if run.get("eoDelivery"):
-                    run["eoRecords"] = self.formal.delivery_records(run["eoDelivery"], run.get("attempt"))
+                    run["eoRecords"] = self.formal.delivery_records(
+                        run["eoDelivery"], run.get("attempt"), binding.get("workorder"),
+                        (run.get("result") or {}).get("commit"),
+                    )
         return {"draft": draft, "status": review_state(draft), "capabilities": self.config_view()}
 
     def update(self, ident, body):
