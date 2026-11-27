@@ -10,7 +10,7 @@ import threading
 import time
 import tomllib
 from contextlib import closing
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib import error, parse, request
 
@@ -18,6 +18,8 @@ import yaml
 
 PROJECT = "Su9moon/PCP-Engineering-Runtime"
 SHA = re.compile(r"[a-f0-9]{40}")
+# Autoloop host/state.ts: two minutes of quiet plus one minute of heartbeat coalescing.
+HUB_ONLINE_WINDOW = timedelta(minutes=3)
 ACTIONS = {
     "create": "EO 提供 Git/YAML 记录。未配置授权的 Job / Workorder 写入接口。",
     "dispatch": "未配置关联此 Workorder 的 ES 授权及派发适配器。",
@@ -47,7 +49,13 @@ def fields(row, *names):
 
 
 def observed(label, status, detail, **extra):
-    return {"label": label, "status": status, "detail": detail, "observedAt": now(), **extra}
+    availability = "unknown"
+    if status == "connected":
+        availability = "active"
+    elif status in {"disconnected", "failed", "blocked", "unavailable"}:
+        availability = "unavailable"
+    return {"label": label, "status": status, "availability": availability,
+            "detail": detail, "observedAt": now(), **extra}
 
 
 def read_json(path):
@@ -235,15 +243,39 @@ def archived_hub(path, receipts):
     return runs, workers
 
 
-def provider(name, config_file, projection=None, receipts=None):
-    live = None
+def hub_timestamp(value):
+    if not isinstance(value, str):
+        return None
     try:
-        live = hub_state(read_json(config_file))
-        health = observed(name, "connected", "Autoloop GET /v1/state 当前响应。", sourceAt=clean(live.get("now")))
+        stamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo is not None else None
+
+
+def worker_availability(online, heartbeat, hub_time, observed_at):
+    if hub_time is None:
+        return "unknown"
+    if online is False:
+        return "unavailable"
+    if online is True and heartbeat and heartbeat <= hub_time:
+        age = max(hub_time, observed_at) - heartbeat
+        return "active" if age <= HUB_ONLINE_WINDOW else "unavailable"
+    return "unknown"
+
+
+def provider(name, config_file, projection=None, receipts=None):
+    snapshot = None
+    try:
+        response = hub_state(read_json(config_file))
+        if not isinstance(response, dict) or not all(isinstance(response.get(key), list) for key in ("runs", "agents")):
+            raise ValueError("Unsupported Hub state")
+        snapshot = response
+        health = observed(name, "connected", "Autoloop GET /v1/state 已响应。", sourceAt=clean(snapshot.get("now")))
     except error.HTTPError as exc:
         health = observed(name, "blocked" if exc.code in {401, 403} else "failed", f"Autoloop GET /v1/state HTTP {exc.code}。")
     except (TimeoutError, ConnectionError, error.URLError):
-        health = observed(name, "disconnected", "配置的 Autoloop Hub 当前不可达。")
+        health = observed(name, "disconnected", "配置的 Autoloop Hub 状态读取失败。")
     except (OSError, KeyError, ValueError, TypeError, AttributeError):
         health = observed(name, "unconfigured", "Autoloop Hub 读取配置或响应不可用。")
     runs, workers, history_error = [], [], False
@@ -252,41 +284,68 @@ def provider(name, config_file, projection=None, receipts=None):
             runs, workers = archived_hub(projection, receipt_artifacts(receipts))
         except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError):
             history_error = True
-    if isinstance(live, dict):
+    if snapshot is not None:
+        observed_at = datetime.fromisoformat(health["observedAt"])
+        hub_time = hub_timestamp(snapshot.get("now"))
+        # observedAt is rounded down to seconds, while the Hub includes fractions.
+        if (hub_time is None or hub_time.replace(microsecond=0) > observed_at
+                or observed_at - hub_time > HUB_ONLINE_WINDOW):
+            hub_time = None
+            health.update(availability="unknown", detail="Autoloop GET /v1/state 已响应，快照时效无法确认。")
+        run_mode = "live" if hub_time is not None else "snapshot"
         stored = {row["id"]: row for row in runs}
-        for row in live.get("runs", []):
-            if type(row.get("id")) is not int:
+        for row in snapshot["runs"]:
+            if not isinstance(row, dict) or type(row.get("id")) is not int:
                 continue
             prior = stored.get(row["id"], {})
-            events = prior.get("events") or [fields(e, "id", "source", "type", "subject") for e in row.get("events", [])]
+            if run_mode == "snapshot" and prior:
+                continue
+            events = prior.get("events") or [
+                fields(event, "id", "source", "type", "subject") for event in (row.get("events") or [])
+            ]
             stored[row["id"]] = {
                 **fields(row, "id", "rule", "agent", "state", "attempts", "session", "createdAt", "claimedAt",
                          "finishedAt", "error", "summary"),
-                "events": events, "delivery": prior.get("delivery"), "mode": "live",
+                "events": events, "delivery": prior.get("delivery"), "mode": run_mode,
             }
         runs = sorted(stored.values(), key=lambda row: row["id"], reverse=True)
         by_worker = {item["name"]: item for item in workers}
+        presence = {}
         by_agent = {}
-        for agent in live.get("agents", []):
+        for agent in snapshot["agents"]:
+            if not isinstance(agent, dict):
+                continue
             worker_name = clean(agent.get("worker"))
             if not isinstance(worker_name, str) or not worker_name:
                 continue
-            by_agent[agent.get("id")] = worker_name
             worker = by_worker.setdefault(worker_name, {"name": worker_name})
-            worker.update(fields(agent, "seenAt", "online"))
+            heartbeat = hub_timestamp(agent.get("seenAt"))
+            prior_heartbeat = hub_timestamp(worker.get("seenAt"))
+            if heartbeat and (prior_heartbeat is None or heartbeat > prior_heartbeat):
+                worker["seenAt"] = heartbeat.isoformat()
+            availability = worker_availability(agent.get("online"), heartbeat, hub_time, observed_at)
+            presence.setdefault(worker_name, set()).add(availability)
+            if isinstance(agent.get("id"), str):
+                by_agent[agent["id"]] = (worker_name, availability)
             executor = clean(agent.get("use"))
             if executor:
                 worker["executors"] = sorted(set([*worker.get("executors", []), executor]))
+        for worker_name, states in presence.items():
+            worker = by_worker[worker_name]
+            worker["availability"] = next(value for value in ("active", "unknown", "unavailable") if value in states)
+            if worker["availability"] != "unknown":
+                worker["online"] = worker["availability"] == "active"
         for run in runs:
-            if run["mode"] == "live" and run["agent"] in by_agent:
-                run["worker"] = by_agent[run["agent"]]
-                if run["state"] == "claimed":
+            if run["mode"] == run_mode and run["agent"] in by_agent:
+                run["worker"], availability = by_agent[run["agent"]]
+                if run["state"] == "claimed" and availability == "active":
                     by_worker[run["worker"]].setdefault("activeRuns", []).append(run["id"])
         workers = list(by_worker.values())
     for run in runs:
         run.update(pool=name, summary=clean(run.get("summary")), error=clean(run.get("error")))
     for worker in workers:
-        worker["pool"] = name
+        worker.update(pool=name, observedAt=health["observedAt"])
+        worker.setdefault("availability", "unknown")
     if history_error:
         health["detail"] += " 历史投影读取失败。"
     return {"health": health, "runs": runs, "workers": workers}
@@ -443,7 +502,7 @@ class Sources:
             "observedAt": now(), "actions": ACTIONS, "eo": eo, "es": es, "hubs": hubs, "ruflo": ruflo,
             "supervisor": supervisor, "commits": commits,
             "connections": [
-                observed("Dashboard HTTPS", "connected", "本机与已配置的局域网入口均免登录。"),
+                observed("Dashboard HTTPS", "connected", "当前 HTTPS 入口已响应读取。"),
                 observed("GitHub", "unverified", "提供 GitHub 源码定位。当前仅核验本机 Git 对象。"),
                 observed("GPT ↔ Ruflo", "deferred", "直接管理延期到下一版本。"),
             ],
